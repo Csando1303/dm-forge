@@ -1,15 +1,170 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import {
-  getApiKey,
-  setApiKey,
-  clearApiKey,
-  askRulesAssistant,
-  generateNPC,
-  regenerateNPCField,
-  suggestEncounters,
-} from "../../services/aiService.js";
+import { useState } from "react";
+import { NPC_NAMES, RANDOM_ENCOUNTER_TABLES } from "../../data/generatorTables.js";
 
-// ─── Shared style tokens ───────────────────────────────────────────────────────
+// ─── Local random data ─────────────────────────────────────────────────────────
+
+const RACES = ["Human","Elf","Dwarf","Halfling","Gnome","Tiefling","Half-Orc","Dragonborn","Half-Elf","Aasimar"];
+const CLASSES = ["Barbarian","Bard","Cleric","Druid","Fighter","Monk","Paladin","Ranger","Rogue","Sorcerer","Warlock","Wizard","Artificer","Blood Hunter"];
+const ROLES = ["Merchant","Guard","Noble","Innkeeper","Blacksmith","Farmer","Scholar","Priest","Bandit","Sailor","Spy","Herald","Beggar","Apothecary"];
+const BACKGROUNDS = ["Acolyte","Charlatan","Criminal","Entertainer","Folk Hero","Guild Artisan","Hermit","Noble","Outlander","Sage","Sailor","Soldier","Urchin","Far Traveler","Haunted One","Knight","Pirate","Gladiator","Courtier","Archaeologist"];
+const ALIGNMENTS = ["Lawful Good","Neutral Good","Chaotic Good","Lawful Neutral","True Neutral","Chaotic Neutral","Lawful Evil","Neutral Evil","Chaotic Evil"];
+
+const BUILDS = ["stocky","wiry","muscular","slender","heavyset","lithe","broad-shouldered","gaunt","compact","lanky"];
+const HAIR = ["raven-black","chestnut brown","fiery red","silver-streaked","ash blonde","iron grey","sandy","platinum white","auburn","jet black"];
+const EYES = ["piercing blue","warm brown","cold grey","bright green","amber","violet","hazel","ice blue","dark brown","golden"];
+const FEATURES = [
+  "a jagged scar across the left cheek","calloused, ink-stained fingers","a missing front tooth revealed by a wide grin","an elaborate tattoo curling up the neck","a nervous habit of drumming fingers on every surface","deep-set worry lines that age them beyond their years","a crooked nose broken more than once","unusually long fingers adorned with many rings","a permanent squint as though sizing everyone up","a birthmark shaped like a crescent on the jaw","one ear noticeably higher than the other","eyes that never quite settle on one thing"
+];
+
+const PERSONALITY_TRAITS = [
+  "I always have a plan for what to do when things go wrong.",
+  "I am always calm, no matter the situation — never raise my voice.",
+  "The first thing I do in a new place is note the exits.",
+  "I hoard small trinkets that others would consider junk.",
+  "I tell very long, elaborate stories that often have no point.",
+  "I misuse long words in an attempt to sound smarter.",
+  "I have a strong sense of fair play and always try to find the most equitable solution.",
+  "I can't resist a pretty face or a captivating smile.",
+  "I blow up at the slightest insult and hold grudges for years.",
+  "I am slow to trust but fiercely loyal once earned.",
+  "I use flattery to get what I want and rarely reveal my true intentions.",
+  "I love a good argument and will play devil's advocate just to see where it leads.",
+  "I have little respect for anyone who can't handle themselves in a fight.",
+  "I judge others by their ambitions — idle people bore me.",
+  "I always eat everything on my plate and treat it as a serious task.",
+  "I speak very quietly, forcing others to lean in to hear me.",
+  "I am deeply suspicious of magic I don't understand.",
+  "Everything I do has a reason — I don't believe in luck.",
+  "I find beauty in unexpected places and stop to note them often.",
+  "I never make eye contact when lying, but I've gotten very good at looking people in the eye.",
+];
+
+const IDEALS = [
+  "Freedom. Chains, whether physical or social, are an affront to the self.",
+  "Power. The strong shape the world; the weak endure it.",
+  "Community. Everything I do, I do for the people around me.",
+  "Knowledge. The truth is worth any price.",
+  "Redemption. I have done wrong. I will spend my life making it right.",
+  "Beauty. The world is more bearable when there is art in it.",
+  "Order. Chaos destroys everything it touches. Structure is salvation.",
+  "Change. Old ways must give way to new or they calcify into chains.",
+  "Ambition. Mediocrity is the slow death. I will be remembered.",
+  "Honor. My word is my bond; break it and I am nothing.",
+  "Survival. Every choice I make keeps me alive one more day.",
+  "Loyalty. I will not abandon those who stand with me.",
+  "Justice. The guilty answer for their crimes or the world has no meaning.",
+  "Curiosity. I must understand how everything works.",
+  "Gratitude. I was given a chance I didn't deserve. I intend to use it.",
+];
+
+const BONDS = [
+  "There is someone I wronged long ago. I look for them everywhere.",
+  "I protect a secret that would ruin someone I love.",
+  "A mentor shaped who I am. I carry their lessons like a scar.",
+  "I owe a debt to someone who saved my life — money or otherwise.",
+  "My hometown is everything to me, even in its absence.",
+  "There is a relic in my possession I would die before surrendering.",
+  "I have a sibling I haven't seen in years. I still search for them.",
+  "An old rival defines me as much as any friend ever did.",
+  "I carry a letter I was never able to deliver.",
+  "I served an institution — a guild, temple, army — that I left in disgrace.",
+  "A child I've never met may carry my name.",
+  "I once made a promise under duress that I'm not sure I can keep.",
+  "The person who hurt me most is still out there.",
+  "I owe everything to someone who asks nothing — and that terrifies me.",
+  "I have seen something I cannot explain and I need to understand it.",
+];
+
+const FLAWS = [
+  "I cannot back down from a challenge, even a foolish one.",
+  "I would rather lie smoothly than tell the truth awkwardly.",
+  "I have a vice — drink, gambling, something — that surfaces under pressure.",
+  "I assume I am the most capable person in any room.",
+  "I am deeply superstitious and avoid anything that might bring bad luck.",
+  "I hold people to standards I don't apply to myself.",
+  "I will sacrifice almost anything for what I want.",
+  "I run from emotional intimacy the moment I sense it forming.",
+  "I am violently protective of those weaker than me, even when they don't want it.",
+  "I deflect every serious moment with a joke.",
+  "I am obsessed with a past failure and make poor decisions because of it.",
+  "I trust authority figures instinctively, even when I shouldn't.",
+  "I cannot keep a secret; eventually it spills out.",
+  "I overthink simple decisions until the window closes.",
+  "I nurse old grudges long after everyone else has moved on.",
+];
+
+const SECRET_MOTIVATIONS = [
+  "Seeks to locate a missing person — and fears what they'll find.",
+  "Believes they are destined for something great and is terrified of being ordinary.",
+  "Carries guilt over a death they caused, accidentally or not.",
+  "Is slowly working toward revenge against someone who wronged them years ago.",
+  "Wants to acquire enough wealth to disappear entirely and start over.",
+  "Has been feeding information to a rival faction.",
+  "Is hiding their true identity; their past would change everything.",
+  "Searching for a cure — for themselves or someone they love.",
+  "Was sent here by someone they dare not name, to watch and report.",
+  "Believes they are being followed and is looking for proof.",
+  "Has an addiction to something they're deeply ashamed of.",
+  "Desperately wants to be accepted by people they consider their betters.",
+  "Is sitting on knowledge that could destabilize something powerful.",
+  "Trying to undo a past deal that has started to cost more than expected.",
+  "Waiting for a signal from someone they've lost contact with.",
+];
+
+function pickRandom(arr) {
+  if (!arr || arr.length === 0) return "";
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function generateLocalNPC({ race }) {
+  const raceData = NPC_NAMES[race] || NPC_NAMES["Human"];
+  const gender = pickRandom(["male", "female"]);
+  const firstName = pickRandom(raceData[gender] || raceData.male || []);
+  const surname = pickRandom(raceData.surname || []);
+  const name = surname ? `${firstName} ${surname}` : firstName;
+  const build = pickRandom(BUILDS);
+  const hair = pickRandom(HAIR);
+  const eyes = pickRandom(EYES);
+  const feature = pickRandom(FEATURES);
+  const appearance = `${build.charAt(0).toUpperCase() + build.slice(1)}, with ${hair} hair and ${eyes} eyes. ${feature.charAt(0).toUpperCase() + feature.slice(1)}.`;
+  return {
+    name,
+    gender,
+    appearance,
+    personalityTrait: pickRandom(PERSONALITY_TRAITS),
+    ideal: pickRandom(IDEALS),
+    bond: pickRandom(BONDS),
+    flaw: pickRandom(FLAWS),
+    secretMotivation: pickRandom(SECRET_MOTIVATIONS),
+  };
+}
+
+function generateLocalEncounters({ terrain, partyLevel, count = 3 }) {
+  const lvl = parseInt(partyLevel) || 1;
+  const band = lvl <= 4 ? "1-4" : lvl <= 10 ? "5-10" : lvl <= 16 ? "11-16" : "17+";
+  const keys = terrain === "Any" ? Object.keys(RANDOM_ENCOUNTER_TABLES) : [terrain.toLowerCase()];
+  const results = [];
+  const used = new Set();
+  let attempts = 0;
+  while (results.length < count && attempts < count * 10) {
+    attempts++;
+    const terrainKey = pickRandom(keys);
+    const tableData = RANDOM_ENCOUNTER_TABLES[terrainKey];
+    if (!tableData) continue;
+    const pool = tableData[band] || tableData["1-4"] || [];
+    if (pool.length === 0) continue;
+    const enc = pickRandom(pool);
+    if (!used.has(enc)) {
+      used.add(enc);
+      results.push({ terrain: terrainKey, band, encounter: enc });
+    }
+  }
+  return results;
+}
+
+const TERRAINS = ["Any","Forest","Dungeon","Urban","Mountain","Coastal","Plains","Swamp","Underdark"];
+
+// ─── Shared styles ─────────────────────────────────────────────────────────────
 
 const iStyle = {
   background: "rgba(245,230,200,.05)",
@@ -45,29 +200,6 @@ const btnPrimary = {
   padding: "7px 20px",
 };
 
-const btnSecondary = {
-  background: "rgba(200,149,42,.12)",
-  border: "1px solid rgba(200,149,42,.4)",
-  color: "var(--gold)",
-  borderRadius: 3,
-  cursor: "pointer",
-  fontFamily: "'Cinzel',serif",
-  fontSize: 9,
-  letterSpacing: 1,
-  padding: "5px 14px",
-};
-
-const btnDanger = {
-  background: "rgba(139,26,26,.2)",
-  border: "1px solid rgba(139,26,26,.4)",
-  color: "var(--cr)",
-  borderRadius: 3,
-  cursor: "pointer",
-  fontFamily: "'Cinzel',serif",
-  fontSize: 9,
-  letterSpacing: 1,
-  padding: "5px 14px",
-};
 
 const panel = {
   background: "rgba(26,10,2,.7)",
@@ -76,319 +208,32 @@ const panel = {
   padding: 14,
 };
 
-const errorStyle = {
-  fontFamily: "'IM Fell English',serif",
-  fontSize: 12,
-  color: "#ff8888",
-  background: "rgba(139,26,26,.18)",
-  border: "1px solid rgba(139,26,26,.35)",
-  borderRadius: 3,
-  padding: "7px 11px",
-  marginTop: 8,
-};
+// ─── Reroll button ─────────────────────────────────────────────────────────────
 
-// ─── Spinner ───────────────────────────────────────────────────────────────────
-
-function Spinner() {
+function RerollButton({ onClick }) {
   return (
-    <span style={{
-      display: "inline-block",
-      width: 12,
-      height: 12,
-      border: "2px solid rgba(200,149,42,.3)",
-      borderTop: "2px solid var(--gold)",
-      borderRadius: "50%",
-      animation: "dm-spin 0.7s linear infinite",
-      verticalAlign: "middle",
-      marginRight: 6,
-    }} />
+    <button
+      onClick={onClick}
+      title="Reroll this field"
+      style={{
+        background: "none",
+        border: "1px solid rgba(200,149,42,.3)",
+        borderRadius: 3,
+        color: "var(--gold)",
+        cursor: "pointer",
+        fontSize: 11,
+        padding: "2px 6px",
+        flexShrink: 0,
+      }}
+    >
+      🎲
+    </button>
   );
 }
 
-// ─── API Key Panel ─────────────────────────────────────────────────────────────
+// ─── Pill buttons ──────────────────────────────────────────────────────────────
 
-function ApiKeyPanel() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [keyInput, setKeyInput] = useState("");
-  const [hasKey, setHasKey] = useState(() => !!getApiKey());
-
-  function handleSave() {
-    if (!keyInput.trim()) return;
-    setApiKey(keyInput.trim());
-    setHasKey(true);
-    setKeyInput("");
-  }
-
-  function handleClear() {
-    clearApiKey();
-    setHasKey(false);
-    setKeyInput("");
-  }
-
-  return (
-    <div style={{
-      ...panel,
-      marginBottom: 14,
-      border: hasKey ? "1px solid rgba(76,175,80,.3)" : "1px solid rgba(200,149,42,.35)",
-    }}>
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: collapsed ? 0 : 10 }}>
-        <div style={{
-          fontFamily: "'Cinzel',serif",
-          fontSize: 9,
-          letterSpacing: 1.5,
-          color: hasKey ? "#88cc88" : "var(--gold)",
-          textTransform: "uppercase",
-          flex: 1,
-        }}>
-          {hasKey ? "✓ API Key Configured" : "⚠ No API Key"}
-        </div>
-        <button
-          onClick={() => setCollapsed(c => !c)}
-          style={{ ...btnSecondary, padding: "2px 10px", fontSize: 8 }}
-        >
-          {collapsed ? "▼ Show" : "▲ Hide"}
-        </button>
-      </div>
-
-      {!collapsed && (
-        <>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={lStyle}>
-                {hasKey ? "Replace API Key" : "Enter API Key"}
-              </div>
-              <input
-                type="password"
-                value={keyInput}
-                onChange={e => setKeyInput(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleSave()}
-                placeholder="sk-ant-..."
-                style={iStyle}
-              />
-            </div>
-            <button onClick={handleSave} style={{ ...btnPrimary, padding: "6px 16px", fontSize: 9 }}>
-              Save Key
-            </button>
-            {hasKey && (
-              <button onClick={handleClear} style={{ ...btnDanger, padding: "6px 14px" }}>
-                Clear Key
-              </button>
-            )}
-          </div>
-          <div style={{
-            fontFamily: "'IM Fell English',serif",
-            fontStyle: "italic",
-            fontSize: 11,
-            color: "rgba(245,230,200,.35)",
-            marginTop: 8,
-          }}>
-            Your Anthropic API key is stored only in your browser's localStorage and never sent anywhere except directly to Anthropic.
-            Get a key at{" "}
-            <a
-              href="https://anthropic.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: "rgba(200,149,42,.6)", textDecoration: "underline" }}
-            >
-              anthropic.com
-            </a>.
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─── Tab 1: Rules Assistant ────────────────────────────────────────────────────
-
-function RulesAssistant() {
-  // conversation history: [{role:'user'|'assistant', content:string}]
-  const [history, setHistory] = useState([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const scrollRef = useRef(null);
-
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [history, loading]);
-
-  const handleAsk = useCallback(async () => {
-    const q = input.trim();
-    if (!q || loading) return;
-    setInput("");
-    setError("");
-    const newHistory = [...history, { role: "user", content: q }];
-    setHistory(newHistory);
-    setLoading(true);
-    try {
-      // Pass prior history without the message we just appended (service appends it)
-      const reply = await askRulesAssistant(history, q);
-      setHistory(prev => [...prev, { role: "assistant", content: reply }]);
-    } catch (err) {
-      setError(err.message || "Something went wrong. Please try again.");
-      // Remove the user message we optimistically added
-      setHistory(history);
-    } finally {
-      setLoading(false);
-    }
-  }, [input, history, loading]);
-
-  function handleKeyDown(e) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleAsk();
-    }
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Message history */}
-      <div
-        ref={scrollRef}
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          minHeight: 280,
-          maxHeight: 420,
-          marginBottom: 10,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-          paddingRight: 2,
-        }}
-      >
-        {history.length === 0 && !loading && (
-          <div style={{
-            textAlign: "center",
-            padding: "40px 20px",
-            color: "rgba(245,230,200,.3)",
-            fontFamily: "'IM Fell English',serif",
-            fontStyle: "italic",
-            fontSize: 14,
-            border: "1px dashed rgba(92,51,23,.3)",
-            borderRadius: 4,
-          }}>
-            Ask any D&D 5e rules question…
-          </div>
-        )}
-
-        {history.map((msg, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-            }}
-          >
-            <div style={{
-              maxWidth: "78%",
-              padding: "9px 13px",
-              borderRadius: msg.role === "user"
-                ? "12px 12px 3px 12px"
-                : "12px 12px 12px 3px",
-              background: msg.role === "user"
-                ? "rgba(200,149,42,.22)"
-                : "rgba(26,10,2,.8)",
-              border: msg.role === "user"
-                ? "1px solid rgba(200,149,42,.4)"
-                : "1px solid rgba(92,51,23,.45)",
-              fontFamily: "'IM Fell English',serif",
-              fontSize: 13,
-              color: msg.role === "user" ? "var(--vd)" : "var(--vel)",
-              lineHeight: 1.55,
-              whiteSpace: "pre-wrap",
-            }}>
-              {msg.content}
-            </div>
-          </div>
-        ))}
-
-        {loading && (
-          <div style={{ display: "flex", justifyContent: "flex-start" }}>
-            <div style={{
-              padding: "9px 13px",
-              borderRadius: "12px 12px 12px 3px",
-              background: "rgba(26,10,2,.8)",
-              border: "1px solid rgba(92,51,23,.45)",
-              fontFamily: "'IM Fell English',serif",
-              fontStyle: "italic",
-              fontSize: 12,
-              color: "rgba(245,230,200,.45)",
-            }}>
-              <Spinner /> Consulting the tomes…
-            </div>
-          </div>
-        )}
-      </div>
-
-      {error && <div style={errorStyle}>{error}</div>}
-
-      {/* Input row */}
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-        <textarea
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask a rules question… (Enter to send, Shift+Enter for newline)"
-          rows={2}
-          style={{
-            ...iStyle,
-            resize: "vertical",
-            minHeight: 44,
-            lineHeight: 1.4,
-          }}
-        />
-        <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 }}>
-          <button
-            onClick={handleAsk}
-            disabled={loading || !input.trim()}
-            style={{
-              ...btnPrimary,
-              padding: "7px 18px",
-              opacity: loading || !input.trim() ? 0.5 : 1,
-              cursor: loading || !input.trim() ? "not-allowed" : "pointer",
-            }}
-          >
-            Ask
-          </button>
-          {history.length > 0 && (
-            <button
-              onClick={() => { setHistory([]); setError(""); }}
-              style={{ ...btnDanger, padding: "4px 10px", fontSize: 8 }}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Tab 2: NPC Generator ──────────────────────────────────────────────────────
-
-const ALIGNMENTS = [
-  "Lawful Good", "Neutral Good", "Chaotic Good",
-  "Lawful Neutral", "True Neutral", "Chaotic Neutral",
-  "Lawful Evil", "Neutral Evil", "Chaotic Evil",
-];
-
-const RACE_SUGGESTIONS = [
-  "Human", "Elf", "Dwarf", "Halfling", "Gnome",
-  "Tiefling", "Half-Orc", "Dragonborn", "Half-Elf", "Aasimar",
-];
-
-const CLASS_SUGGESTIONS = [
-  "Fighter", "Wizard", "Rogue", "Cleric", "Paladin",
-  "Ranger", "Bard", "Warlock", "Merchant", "Guard", "Noble", "Innkeeper",
-];
-
-function SuggestionPills({ items, onSelect }) {
+function Pills({ items, onSelect }) {
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
       {items.map(item => (
@@ -406,14 +251,8 @@ function SuggestionPills({ items, onSelect }) {
             padding: "2px 8px",
             cursor: "pointer",
           }}
-          onMouseEnter={e => {
-            e.currentTarget.style.background = "rgba(200,149,42,.18)";
-            e.currentTarget.style.color = "var(--gold)";
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.background = "rgba(200,149,42,.08)";
-            e.currentTarget.style.color = "rgba(245,230,200,.5)";
-          }}
+          onMouseEnter={e => { e.currentTarget.style.background = "rgba(200,149,42,.18)"; e.currentTarget.style.color = "var(--gold)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "rgba(200,149,42,.08)"; e.currentTarget.style.color = "rgba(245,230,200,.5)"; }}
         >
           {item}
         </button>
@@ -422,193 +261,135 @@ function SuggestionPills({ items, onSelect }) {
   );
 }
 
-function RerollButton({ onClick, disabled }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title="Reroll this field"
-      style={{
-        background: "none",
-        border: "1px solid rgba(200,149,42,.3)",
-        borderRadius: 3,
-        color: "var(--gold)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontSize: 11,
-        padding: "2px 6px",
-        opacity: disabled ? 0.4 : 1,
-        flexShrink: 0,
-      }}
-    >
-      🎲
-    </button>
-  );
-}
+// ─── NPC Generator (fully local) ──────────────────────────────────────────────
+
+const NPC_FIELDS = [
+  { key: "appearance",      label: "Appearance" },
+  { key: "personalityTrait",label: "Personality Trait" },
+  { key: "ideal",           label: "Ideal" },
+  { key: "bond",            label: "Bond" },
+  { key: "flaw",            label: "Flaw" },
+  { key: "secretMotivation",label: "Secret Motivation" },
+];
+
+const FIELD_POOLS = {
+  name:             null, // special — regenerated from NPC_NAMES
+  appearance:       null, // special — built from component parts
+  personalityTrait: PERSONALITY_TRAITS,
+  ideal:            IDEALS,
+  bond:             BONDS,
+  flaw:             FLAWS,
+  secretMotivation: SECRET_MOTIVATIONS,
+};
 
 function NPCGenerator({ onSaveToWiki }) {
-  const [race, setRace] = useState("");
-  const [npcClass, setNpcClass] = useState("");
-  const [alignment, setAlignment] = useState("True Neutral");
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [rerolling, setRerolling] = useState({}); // field -> bool
-  const [error, setError] = useState("");
+  const [race, setRace]             = useState("Human");
+  const [npcClass, setNpcClass]     = useState("");
+  const [alignment, setAlignment]   = useState("True Neutral");
+  const [level, setLevel]           = useState(1);
+  const [background, setBackground] = useState("Folk Hero");
+  const [profile, setProfile]       = useState(null);
   const [savedFlash, setSavedFlash] = useState(false);
 
-  const params = { race: race || "Human", npcClass: npcClass || "Commoner", alignment };
-
-  async function handleGenerate() {
-    if (loading) return;
-    setError("");
-    setLoading(true);
-    try {
-      const result = await generateNPC(params);
-      setProfile(result);
-    } catch (err) {
-      setError(err.message || "Failed to generate NPC. Try again.");
-    } finally {
-      setLoading(false);
-    }
+  function generate() {
+    setProfile(generateLocalNPC({ race, npcClass, alignment, level, background }));
   }
 
-  async function handleReroll(field) {
-    if (!profile || rerolling[field]) return;
-    setRerolling(r => ({ ...r, [field]: true }));
-    try {
-      const newVal = await regenerateNPCField(profile, field, params);
-      setProfile(prev => ({ ...prev, [field]: newVal }));
-    } catch (err) {
-      setError(err.message || "Failed to reroll. Try again.");
-    } finally {
-      setRerolling(r => ({ ...r, [field]: false }));
+  function rerollField(key) {
+    if (!profile) return;
+    if (key === "name") {
+      const raceData = NPC_NAMES[race] || NPC_NAMES["Human"];
+      const gender = profile.gender || "male";
+      const firstName = pickRandom(raceData[gender] || raceData.male || []);
+      const surname = pickRandom(raceData.surname || []);
+      setProfile(p => ({ ...p, name: surname ? `${firstName} ${surname}` : firstName }));
+    } else if (key === "appearance") {
+      const build = pickRandom(BUILDS);
+      const hair = pickRandom(HAIR);
+      const eyes = pickRandom(EYES);
+      const feature = pickRandom(FEATURES);
+      setProfile(p => ({ ...p, appearance: `${build.charAt(0).toUpperCase() + build.slice(1)}, with ${hair} hair and ${eyes} eyes. ${feature.charAt(0).toUpperCase() + feature.slice(1)}.` }));
+    } else {
+      const pool = FIELD_POOLS[key];
+      if (pool) setProfile(p => ({ ...p, [key]: pickRandom(pool) }));
     }
   }
 
   function handleSave() {
     if (!profile || !onSaveToWiki) return;
-    onSaveToWiki({
-      ...profile,
-      race: params.race,
-      npcClass: params.npcClass,
-      alignment: params.alignment,
-    });
+    onSaveToWiki({ ...profile, race, role: npcClass || "Commoner", alignment, level, background });
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1800);
   }
 
-  const anyRerolling = Object.values(rerolling).some(Boolean);
-
-  const npcFields = [
-    { key: "name", label: "Name" },
-    { key: "appearance", label: "Appearance" },
-    { key: "personalityTraits", label: "Personality Traits" },
-    { key: "secretMotivation", label: "Secret Motivation" },
-  ];
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* Form */}
+      {/* Form row 1: Race, Class, Alignment */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        {/* Race */}
         <div>
           <div style={lStyle}>Race</div>
-          <input
-            value={race}
-            onChange={e => setRace(e.target.value)}
-            placeholder="Human"
-            style={iStyle}
-          />
-          <SuggestionPills items={RACE_SUGGESTIONS} onSelect={setRace} />
+          <select value={race} onChange={e => setRace(e.target.value)} style={iStyle}>
+            {RACES.map(r => <option key={r}>{r}</option>)}
+          </select>
         </div>
-
-        {/* Class / Role */}
         <div>
           <div style={lStyle}>Class / Role</div>
-          <input
-            value={npcClass}
-            onChange={e => setNpcClass(e.target.value)}
-            placeholder="Fighter, Merchant…"
-            style={iStyle}
-          />
-          <SuggestionPills items={CLASS_SUGGESTIONS} onSelect={setNpcClass} />
+          <input value={npcClass} onChange={e => setNpcClass(e.target.value)} placeholder="Fighter, Merchant…" style={iStyle} />
+          <Pills items={[...CLASSES.slice(0,6), ...ROLES.slice(0,6)]} onSelect={setNpcClass} />
         </div>
-
-        {/* Alignment */}
         <div>
           <div style={lStyle}>Alignment</div>
-          <select
-            value={alignment}
-            onChange={e => setAlignment(e.target.value)}
-            style={iStyle}
-          >
-            {ALIGNMENTS.map(a => (
-              <option key={a} value={a}>{a}</option>
-            ))}
+          <select value={alignment} onChange={e => setAlignment(e.target.value)} style={iStyle}>
+            {ALIGNMENTS.map(a => <option key={a}>{a}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Form row 2: Level, Background */}
+      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 12 }}>
+        <div>
+          <div style={lStyle}>Level (1–20)</div>
+          <input type="number" min={1} max={20} value={level} onChange={e => setLevel(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))} style={iStyle} />
+        </div>
+        <div>
+          <div style={lStyle}>Background</div>
+          <select value={background} onChange={e => setBackground(e.target.value)} style={iStyle}>
+            {BACKGROUNDS.map(b => <option key={b}>{b}</option>)}
           </select>
         </div>
       </div>
 
       <div>
-        <button
-          onClick={handleGenerate}
-          disabled={loading}
-          style={{
-            ...btnPrimary,
-            opacity: loading ? 0.6 : 1,
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
-        >
-          {loading ? <><Spinner />Generating…</> : "✦ Generate NPC"}
-        </button>
+        <button onClick={generate} style={btnPrimary}>✦ Generate NPC</button>
       </div>
 
-      {error && <div style={errorStyle}>{error}</div>}
-
-      {/* Result panel */}
       {profile && (
         <div style={{ ...panel, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{
-            fontFamily: "'Cinzel Decorative',serif",
-            color: "var(--gold)",
-            fontSize: 12,
-            borderBottom: "1px solid rgba(200,149,42,.25)",
-            paddingBottom: 8,
-            marginBottom: 2,
-          }}>
-            {profile.name || "Unnamed NPC"}
-            <span style={{
-              fontFamily: "'Cinzel',serif",
-              fontSize: 9,
-              color: "rgba(200,149,42,.5)",
-              marginLeft: 10,
-              letterSpacing: 1,
-            }}>
-              {params.race} · {params.npcClass} · {params.alignment}
-            </span>
+          {/* Header: name with reroll */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid rgba(200,149,42,.25)", paddingBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'Cinzel Decorative',serif", color: "var(--gold)", fontSize: 13 }}>{profile.name || "Unnamed"}</div>
+              <div style={{ fontFamily: "'Cinzel',serif", fontSize: 9, color: "rgba(200,149,42,.5)", letterSpacing: 1, marginTop: 3 }}>
+                {race} · {npcClass || "Commoner"} · Lvl {level} · {background} · {alignment}
+              </div>
+            </div>
+            <RerollButton onClick={() => rerollField("name")} />
           </div>
 
-          {npcFields.map(({ key, label }) => (
+          {/* All rerollable fields */}
+          {NPC_FIELDS.map(({ key, label }) => (
             <div key={key}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
                 <div style={{ ...lStyle, marginBottom: 0, flex: 1 }}>{label}</div>
-                <RerollButton
-                  onClick={() => handleReroll(key)}
-                  disabled={rerolling[key] || anyRerolling || loading}
-                />
+                <RerollButton onClick={() => rerollField(key)} />
               </div>
               <div style={{
-                fontFamily: "'IM Fell English',serif",
-                fontSize: 13,
-                color: rerolling[key] ? "rgba(245,230,200,.4)" : "var(--vel)",
-                lineHeight: 1.55,
-                padding: "6px 10px",
-                background: "rgba(0,0,0,.25)",
-                borderRadius: 3,
-                border: "1px solid rgba(92,51,23,.25)",
-                fontStyle: key === "secretMotivation" ? "italic" : "normal",
-                transition: "color .2s",
+                fontFamily: "'IM Fell English',serif", fontSize: 13, color: "var(--vel)",
+                lineHeight: 1.55, padding: "6px 10px", background: "rgba(0,0,0,.25)",
+                borderRadius: 3, border: "1px solid rgba(92,51,23,.25)",
+                fontStyle: key === "secretMotivation" || key === "ideal" || key === "bond" ? "italic" : "normal",
               }}>
-                {rerolling[key] ? <><Spinner />Rerolling…</> : profile[key]}
+                {profile[key]}
               </div>
             </div>
           ))}
@@ -616,12 +397,7 @@ function NPCGenerator({ onSaveToWiki }) {
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
             <button
               onClick={handleSave}
-              style={{
-                ...btnPrimary,
-                background: savedFlash ? "rgba(76,175,80,.85)" : "var(--gold)",
-                color: savedFlash ? "#fff" : "var(--ink)",
-                transition: "background .3s",
-              }}
+              style={{ ...btnPrimary, background: savedFlash ? "rgba(76,175,80,.85)" : "var(--gold)", color: savedFlash ? "#fff" : "var(--ink)", transition: "background .3s" }}
             >
               {savedFlash ? "✓ Saved to Wiki" : "✦ Save to Wiki"}
             </button>
@@ -632,231 +408,113 @@ function NPCGenerator({ onSaveToWiki }) {
   );
 }
 
-// ─── Tab 3: Encounter Suggester ────────────────────────────────────────────────
-
-function EncounterCard({ enc, index }) {
-  return (
-    <div style={{
-      ...panel,
-      borderLeft: "3px solid var(--gold)",
-    }}>
-      <div style={{
-        display: "flex",
-        alignItems: "baseline",
-        gap: 8,
-        marginBottom: 8,
-      }}>
-        <div style={{
-          fontFamily: "'Cinzel Decorative',serif",
-          fontSize: 9,
-          color: "rgba(200,149,42,.5)",
-          flexShrink: 0,
-        }}>
-          {index + 1}.
-        </div>
-        <div style={{
-          fontFamily: "'Cinzel',serif",
-          fontSize: 12,
-          color: "var(--gold)",
-          fontWeight: 700,
-        }}>
-          {enc.title}
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 6 }}>
-        <div style={{ ...lStyle, marginBottom: 3 }}>Monsters</div>
-        <div style={{
-          fontFamily: "'Cinzel',serif",
-          fontSize: 11,
-          color: "#ff9999",
-          padding: "4px 8px",
-          background: "rgba(139,26,26,.12)",
-          borderRadius: 3,
-          border: "1px solid rgba(139,26,26,.25)",
-          display: "inline-block",
-        }}>
-          {enc.monsters}
-        </div>
-      </div>
-
-      <div>
-        <div style={{ ...lStyle, marginBottom: 3 }}>Narrative Hook</div>
-        <div style={{
-          fontFamily: "'IM Fell English',serif",
-          fontSize: 13,
-          fontStyle: "italic",
-          color: "var(--vel)",
-          lineHeight: 1.55,
-        }}>
-          {enc.hook}
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Tab 3: Encounter Suggester (fully local) ──────────────────────────────────
 
 function EncounterSuggester({ characters }) {
-  // Auto-detect party level from characters if possible
   const detectedLevel = (() => {
-    if (!characters || characters.length === 0) return "";
-    const levels = characters.map(c => c.level || c.details?.level || 1).filter(Boolean);
-    if (levels.length === 0) return "";
-    return Math.round(levels.reduce((a, b) => a + b, 0) / levels.length);
+    if (!characters || characters.length === 0) return 1;
+    const lvls = characters.map(c => c.level || c.details?.level || 1);
+    return Math.max(1, Math.round(lvls.reduce((a, b) => a + b, 0) / lvls.length));
   })();
 
-  const [partyLevel, setPartyLevel] = useState(detectedLevel || "");
-  const [partySize, setPartySize] = useState(characters?.length || "");
-  const [context, setContext] = useState("");
-  const [encounters, setEncounters] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [partyLevel, setPartyLevel] = useState(detectedLevel);
+  const [partySize,  setPartySize]  = useState(characters?.length || 4);
+  const [terrain,    setTerrain]    = useState("Any");
+  const [results,    setResults]    = useState([]);
 
-  async function handleSuggest() {
-    if (loading) return;
-    const lvl = parseInt(partyLevel) || 1;
-    const sz = parseInt(partySize) || 4;
-    if (lvl < 1 || lvl > 20 || sz < 1 || sz > 10) {
-      setError("Party level must be 1–20 and party size 1–10.");
-      return;
-    }
-    setError("");
-    setLoading(true);
-    try {
-      const result = await suggestEncounters({
-        partyLevel: lvl,
-        partySize: sz,
-        context: context.trim() || "A standard dungeon adventure",
-      });
-      setEncounters(result);
-    } catch (err) {
-      setError(err.message || "Failed to suggest encounters. Try again.");
-    } finally {
-      setLoading(false);
-    }
+  function generate() {
+    setResults(generateLocalEncounters({ terrain, partyLevel, count: 3 }));
   }
+
+  const TERRAIN_COLORS = {
+    forest: "#4a7c59", dungeon: "#7c4a4a", urban: "#4a5c7c", mountain: "#6a6a7c",
+    coastal: "#4a6a7c", plains: "#7c6a4a", swamp: "#5a7c4a", underdark: "#5a4a7c",
+  };
+
+  const band = partyLevel <= 4 ? "1-4" : partyLevel <= 10 ? "5-10" : partyLevel <= 16 ? "11-16" : "17+";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* Form */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <div>
           <div style={lStyle}>
-            Party Level (1–20)
-            {detectedLevel ? (
-              <span style={{ color: "rgba(200,149,42,.5)", marginLeft: 6, textTransform: "none", letterSpacing: 0, fontSize: 8 }}>
-                auto-detected
-              </span>
-            ) : null}
+            Party Level
+            {characters?.length > 0 && <span style={{ color: "rgba(200,149,42,.5)", marginLeft: 6, textTransform: "none", letterSpacing: 0, fontSize: 8 }}>auto</span>}
           </div>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={partyLevel}
-            onChange={e => setPartyLevel(e.target.value)}
-            placeholder="e.g. 5"
-            style={iStyle}
-          />
+          <input type="number" min={1} max={20} value={partyLevel} onChange={e => setPartyLevel(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))} style={iStyle} />
         </div>
-
         <div>
           <div style={lStyle}>
-            Party Size (1–10)
-            {characters?.length ? (
-              <span style={{ color: "rgba(200,149,42,.5)", marginLeft: 6, textTransform: "none", letterSpacing: 0, fontSize: 8 }}>
-                {characters.length} in party
-              </span>
-            ) : null}
+            Party Size
+            {characters?.length > 0 && <span style={{ color: "rgba(200,149,42,.5)", marginLeft: 6, textTransform: "none", letterSpacing: 0, fontSize: 8 }}>{characters.length} in party</span>}
           </div>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={partySize}
-            onChange={e => setPartySize(e.target.value)}
-            placeholder="e.g. 4"
-            style={iStyle}
-          />
+          <input type="number" min={1} max={10} value={partySize} onChange={e => setPartySize(Math.max(1, Math.min(10, parseInt(e.target.value) || 4)))} style={iStyle} />
         </div>
-
-        <div style={{ gridColumn: "1 / -1" }}>
-          <div style={lStyle}>Context / Setting</div>
-          <textarea
-            value={context}
-            onChange={e => setContext(e.target.value)}
-            placeholder="The party is in a haunted forest looking for a missing child…"
-            rows={3}
-            style={{ ...iStyle, resize: "vertical", lineHeight: 1.5 }}
-          />
+        <div>
+          <div style={lStyle}>Terrain</div>
+          <select value={terrain} onChange={e => setTerrain(e.target.value)} style={iStyle}>
+            {TERRAINS.map(t => <option key={t}>{t}</option>)}
+          </select>
         </div>
       </div>
 
       <div>
-        <button
-          onClick={handleSuggest}
-          disabled={loading}
-          style={{
-            ...btnPrimary,
-            opacity: loading ? 0.6 : 1,
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
-        >
-          {loading ? <><Spinner />Summoning encounters…</> : "✦ Suggest Encounters"}
-        </button>
+        <button onClick={generate} style={btnPrimary}>✦ Suggest Encounters</button>
       </div>
 
-      {error && <div style={errorStyle}>{error}</div>}
-
-      {encounters.length > 0 && (
+      {results.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{
-            fontFamily: "'Cinzel',serif",
-            fontSize: 9,
-            letterSpacing: 1.5,
-            color: "rgba(200,149,42,.5)",
-            textTransform: "uppercase",
-            borderBottom: "1px solid rgba(200,149,42,.15)",
-            paddingBottom: 6,
-          }}>
-            3 Encounter Suggestions
+          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 9, letterSpacing: 1.5, color: "rgba(200,149,42,.5)", textTransform: "uppercase", borderBottom: "1px solid rgba(200,149,42,.15)", paddingBottom: 6 }}>
+            {results.length} Encounter Suggestions · Tier {band} · {partySize} Players
           </div>
-          {encounters.map((enc, i) => (
-            <EncounterCard key={i} enc={enc} index={i} />
-          ))}
+          {results.map((r, i) => {
+            const terrColor = TERRAIN_COLORS[r.terrain] || "#6a6a6a";
+            return (
+              <div key={i} style={{ ...panel, borderLeft: "3px solid var(--gold)" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontFamily: "'Cinzel Decorative',serif", fontSize: 9, color: "rgba(200,149,42,.5)" }}>{i + 1}.</span>
+                  <span style={{
+                    fontFamily: "'Cinzel',serif", fontSize: 9, letterSpacing: 1,
+                    background: terrColor + "33", border: `1px solid ${terrColor}88`,
+                    color: terrColor, borderRadius: 2, padding: "2px 8px", textTransform: "capitalize",
+                  }}>
+                    {r.terrain}
+                  </span>
+                  <span style={{
+                    fontFamily: "'Cinzel',serif", fontSize: 9, letterSpacing: 1,
+                    background: "rgba(200,149,42,.1)", border: "1px solid rgba(200,149,42,.3)",
+                    color: "var(--gold)", borderRadius: 2, padding: "2px 8px",
+                  }}>
+                    Tier {r.band}
+                  </span>
+                </div>
+                <div style={{ fontFamily: "'IM Fell English',serif", fontSize: 13, color: "var(--vel)", lineHeight: 1.6, fontStyle: "italic" }}>
+                  {r.encounter}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-// ─── Main AITools Component ────────────────────────────────────────────────────
+// ─── Main AITools ──────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: "rules",      label: "Rules Assistant",    icon: "📜" },
   { id: "npc",        label: "NPC Generator",      icon: "🧙" },
   { id: "encounters", label: "Encounter Suggester", icon: "⚔" },
 ];
 
 export default function AITools({ characters = [], onSaveToWiki }) {
-  const [activeTab, setActiveTab] = useState("rules");
+  const [activeTab, setActiveTab] = useState("npc");
 
   return (
     <>
-      {/* Inline keyframes for spinner */}
       <style>{`@keyframes dm-spin { to { transform: rotate(360deg); } }`}</style>
-
       <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-        {/* API Key Panel (always visible at top) */}
-        <ApiKeyPanel />
-
-        {/* Sub-tab bar */}
-        <div style={{
-          display: "flex",
-          gap: 0,
-          borderBottom: "2px solid rgba(200,149,42,.25)",
-          marginBottom: 16,
-        }}>
+        <div style={{ display: "flex", gap: 0, borderBottom: "2px solid rgba(200,149,42,.25)", marginBottom: 16 }}>
           {TABS.map(t => (
             <button
               key={t.id}
@@ -864,9 +522,7 @@ export default function AITools({ characters = [], onSaveToWiki }) {
               style={{
                 background: activeTab === t.id ? "rgba(200,149,42,.1)" : "none",
                 border: "none",
-                borderBottom: activeTab === t.id
-                  ? "2px solid var(--gold)"
-                  : "2px solid transparent",
+                borderBottom: activeTab === t.id ? "2px solid var(--gold)" : "2px solid transparent",
                 color: activeTab === t.id ? "var(--gold)" : "rgba(200,149,42,.4)",
                 cursor: "pointer",
                 fontFamily: "'Cinzel',serif",
@@ -881,12 +537,8 @@ export default function AITools({ characters = [], onSaveToWiki }) {
                 marginBottom: -2,
                 position: "relative",
               }}
-              onMouseEnter={e => {
-                if (activeTab !== t.id) e.currentTarget.style.color = "rgba(200,149,42,.75)";
-              }}
-              onMouseLeave={e => {
-                if (activeTab !== t.id) e.currentTarget.style.color = "rgba(200,149,42,.4)";
-              }}
+              onMouseEnter={e => { if (activeTab !== t.id) e.currentTarget.style.color = "rgba(200,149,42,.75)"; }}
+              onMouseLeave={e => { if (activeTab !== t.id) e.currentTarget.style.color = "rgba(200,149,42,.4)"; }}
             >
               <span style={{ fontSize: 13 }}>{t.icon}</span>
               {t.label}
@@ -894,10 +546,8 @@ export default function AITools({ characters = [], onSaveToWiki }) {
           ))}
         </div>
 
-        {/* Tab content */}
         <div style={{ ...panel, minHeight: 320 }}>
-          {activeTab === "rules" && <RulesAssistant />}
-          {activeTab === "npc" && <NPCGenerator onSaveToWiki={onSaveToWiki} />}
+{activeTab === "npc" && <NPCGenerator onSaveToWiki={onSaveToWiki} />}
           {activeTab === "encounters" && <EncounterSuggester characters={characters} />}
         </div>
       </div>

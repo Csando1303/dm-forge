@@ -1,552 +1,971 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { genId } from "../../store.js";
-import { CONDITIONS } from "../../data/monsters.js";
+import { CONDITIONS, MONSTERS } from "../../data/monsters.js";
 
+// ─── Module-level helpers ──────────────────────────────────────────────────────
+function rollD20() { return Math.floor(Math.random() * 20) + 1; }
+function abMod(s) { return Math.floor(((s || 10) - 10) / 2); }
+const CR_SORT = cr => ({ "0": 0, "1/8": .125, "1/4": .25, "1/2": .5 }[cr] ?? (parseFloat(cr) || 0));
+const CRS = ["all","0","1/8","1/4","1/2","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20"];
 const COND_MAP = Object.fromEntries(CONDITIONS.map(c => [c.id, c]));
 
-function roll(sides) { return Math.floor(Math.random() * sides) + 1; }
-function rollInitiative(dexMod) { return roll(20) + dexMod; }
-function abMod(score) { return Math.floor(((score || 10) - 10) / 2); }
+// ─── Style tokens ──────────────────────────────────────────────────────────────
+const sPanel = { background: "rgba(26,10,2,.8)", border: "1px solid rgba(92,51,23,.4)", borderRadius: 4, padding: 10 };
+const sLabel = { fontFamily: "'Cinzel',serif", fontSize: 8, letterSpacing: 1.5, textTransform: "uppercase", color: "rgba(200,149,42,.4)", marginBottom: 4, display: "block" };
+const sInput = { background: "rgba(245,230,200,.05)", border: "1px solid rgba(92,51,23,.4)", borderRadius: 3, color: "var(--vel)", fontFamily: "'IM Fell English',serif", fontSize: 13, padding: "4px 8px", outline: "none", width: "100%" };
+const sBtnGold = { background: "var(--gold)", border: "none", color: "var(--ink)", borderRadius: 3, cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 9, fontWeight: 700, letterSpacing: 1, padding: "5px 12px" };
+const sBtnSec = { background: "rgba(200,149,42,.1)", border: "1px solid rgba(200,149,42,.4)", color: "var(--gold)", borderRadius: 3, cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 9, letterSpacing: 1, padding: "5px 10px" };
+const sBtnDng = { background: "rgba(139,26,26,.2)", border: "1px solid rgba(139,26,26,.4)", color: "var(--cr)", borderRadius: 3, cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 9, letterSpacing: 1, padding: "5px 10px" };
 
-function ConditionPip({ condId, onRemove }) {
-  const c = COND_MAP[condId];
-  if (!c) return null;
-  return (
-    <span title={`${c.name}: ${c.desc}`} onClick={onRemove}
-      style={{ display:"inline-flex", alignItems:"center", gap:2, background:c.color+"33",
-        border:`1px solid ${c.color}`, borderRadius:3, padding:"1px 5px", fontSize:9,
-        cursor:"pointer", color:c.color, fontFamily:"'Cinzel',serif", letterSpacing:.5,
-        transition:"opacity .15s" }}
-      onMouseEnter={e=>e.currentTarget.style.opacity=".6"}
-      onMouseLeave={e=>e.currentTarget.style.opacity="1"}
-    >
-      {c.icon} {c.name} ✕
-    </span>
-  );
-}
+// ─── Cell component ────────────────────────────────────────────────────────────
+function Cell({ x, y, px, combatant, isActive, isSelected, isWall, placingId, editMode, onClick, onMouseDown, onCellMouseEnter }) {
+  const [hovered, setHovered] = useState(false);
 
-function CombatantRow({ combatant, isActive, index, onUpdate, onRemove, onMoveUp, onMoveDown, totalCount }) {
-  const [editing, setEditing] = useState(false);
-  const [dmgInput, setDmgInput] = useState("");
-  const [healInput, setHealInput] = useState("");
-  const [showCondPicker, setShowCondPicker] = useState(false);
-
-  const hpPct = combatant.hpMax > 0 ? Math.max(0, Math.min(1, combatant.hp / combatant.hpMax)) : 1;
+  const isDead = combatant && combatant.hp <= 0;
+  const isEnemy = combatant?.type === "enemy";
+  const hpPct = combatant ? Math.max(0, Math.min(1, combatant.hp / combatant.hpMax)) : 1;
   const hpColor = hpPct > 0.5 ? "#4caf50" : hpPct > 0.25 ? "#e8a44b" : "#e84b4b";
 
-  function applyDmg() {
-    const n = parseInt(dmgInput);
-    if (isNaN(n)) return;
-    onUpdate({ hp: Math.max(0, combatant.hp - n) });
-    setDmgInput("");
-  }
-  function applyHeal() {
-    const n = parseInt(healInput);
-    if (isNaN(n)) return;
-    onUpdate({ hp: Math.min(combatant.hpMax, combatant.hp + n) });
-    setHealInput("");
-  }
-  function addCondition(condId) {
-    if ((combatant.conditions || []).includes(condId)) return;
-    onUpdate({ conditions: [...(combatant.conditions || []), condId] });
-    setShowCondPicker(false);
-  }
-  function removeCondition(condId) {
-    onUpdate({ conditions: (combatant.conditions || []).filter(c => c !== condId) });
-  }
+  const tokenColor = isDead ? "#333" : isEnemy ? "#8b2222" : "#1a3a7a";
+  const showPlacingHint = placingId && !combatant && !isWall && editMode === "move";
 
-  const isEnemy = combatant.type === "enemy";
-  const isDead = combatant.hp <= 0;
+  let bgColor = "rgba(14,4,0,.5)";
+  if (isWall) bgColor = "rgba(50,25,5,.95)";
+  else if (hovered && !combatant) bgColor = "rgba(200,149,42,.08)";
+
+  const cellStyle = {
+    width: px,
+    height: px,
+    border: `1px solid ${isSelected ? "rgba(200,149,42,.9)" : "rgba(60,30,10,.4)"}`,
+    background: bgColor,
+    position: "relative",
+    cursor: "pointer",
+    flexShrink: 0,
+    outline: isSelected ? "2px solid rgba(200,149,42,.6)" : "none",
+    outlineOffset: -2,
+    boxSizing: "border-box",
+  };
+
+  const tokenStyle = {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -60%)",
+    width: px * 0.7,
+    height: px * 0.7,
+    borderRadius: "50%",
+    background: tokenColor,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: isDead ? "#888" : "#fff",
+    fontSize: px * 0.32,
+    fontFamily: "'Cinzel',serif",
+    fontWeight: 700,
+    opacity: isDead ? 0.45 : 1,
+    border: isActive ? `2px solid #c8952a` : "1px solid rgba(255,255,255,.2)",
+    boxShadow: isActive ? `0 0 ${px * 0.4}px rgba(200,149,42,.8)` : "none",
+    userSelect: "none",
+    zIndex: 2,
+  };
+
+  const hpBarStyle = px >= 36 ? {
+    position: "absolute",
+    bottom: 2,
+    left: 2,
+    right: 2,
+    height: 3,
+    background: "rgba(0,0,0,.5)",
+    borderRadius: 2,
+    overflow: "hidden",
+    zIndex: 3,
+  } : null;
+
+  const placingHintStyle = {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    width: px * 0.65,
+    height: px * 0.65,
+    borderRadius: "50%",
+    border: "2px dashed rgba(74,144,226,.7)",
+    opacity: hovered ? 1 : 0,
+    pointerEvents: "none",
+    zIndex: 2,
+  };
 
   return (
-    <div style={{
-      background: isActive ? "rgba(200,149,42,.13)" : isDead ? "rgba(0,0,0,.3)" : "rgba(26,10,2,.6)",
-      border: `1px solid ${isActive ? "var(--gold)" : isDead ? "rgba(139,26,26,.3)" : "rgba(92,51,23,.35)"}`,
-      borderLeft: `4px solid ${isEnemy ? "#e84b4b" : "#4b9ee8"}`,
-      borderRadius: 4, padding: "8px 10px", marginBottom: 6,
-      opacity: isDead ? .5 : 1, transition: "all .2s",
-      boxShadow: isActive ? "0 0 12px rgba(200,149,42,.25)" : "none",
-    }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-        {/* Initiative badge */}
-        <div style={{
-          background: isActive ? "var(--gold)" : "rgba(200,149,42,.2)",
-          color: isActive ? "var(--ink)" : "var(--gold)",
-          fontFamily:"'Cinzel Decorative',serif", fontSize:15, fontWeight:700,
-          width:36, height:36, borderRadius:"50%", display:"flex", alignItems:"center",
-          justifyContent:"center", flexShrink:0, border:"2px solid rgba(200,149,42,.4)",
-          cursor:"pointer",
-        }} onClick={() => { const v = prompt("Change initiative:", combatant.initiative); if (v !== null && !isNaN(+v)) onUpdate({ initiative: +v }); }}>
-          {combatant.initiative}
-        </div>
-
-        {/* Name & type */}
-        <div style={{ flex:1, minWidth:100 }}>
-          {editing ? (
-            <input autoFocus value={combatant.name} onChange={e=>onUpdate({name:e.target.value})}
-              onBlur={()=>setEditing(false)} onKeyDown={e=>e.key==="Enter"&&setEditing(false)}
-              style={{ background:"transparent", border:"none", borderBottom:"1px solid var(--gold)",
-                color:"var(--gold)", fontFamily:"'Cinzel',serif", fontSize:13, outline:"none", width:"100%" }} />
-          ) : (
-            <div onClick={()=>setEditing(true)} style={{ fontFamily:"'Cinzel',serif", fontSize:13,
-              color: isDead ? "var(--br)" : isActive ? "var(--gold)" : "var(--vel)",
-              cursor:"text", textDecoration: isDead ? "line-through" : "none" }}>
-              {combatant.name}
-              {combatant.isConcentrating && <span title="Concentrating" style={{marginLeft:5,fontSize:10}}>🔮</span>}
-            </div>
-          )}
-          <div style={{ fontSize:9, color:"rgba(245,230,200,.35)", fontFamily:"'Cinzel',serif", letterSpacing:.5 }}>
-            {combatant.type === "enemy" ? "Enemy" : "Ally"}{combatant.cr ? ` · CR ${combatant.cr}` : ""}{combatant.ac ? ` · AC ${combatant.ac}` : ""}
-          </div>
-        </div>
-
-        {/* HP bar & controls */}
-        <div style={{ display:"flex", flexDirection:"column", gap:3, alignItems:"flex-end", minWidth:130 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-            <span style={{ fontFamily:"'Cinzel',serif", fontSize:11, color: hpColor }}>
-              {isDead ? "DEAD" : `${combatant.hp} / ${combatant.hpMax}`}
-            </span>
-            <span style={{ fontSize:9, color:"rgba(245,230,200,.35)" }}>HP</span>
-          </div>
-          <div style={{ width:130, height:5, background:"rgba(255,255,255,.1)", borderRadius:3, overflow:"hidden" }}>
-            <div style={{ width:`${hpPct*100}%`, height:"100%", background:hpColor, transition:"width .3s", borderRadius:3 }}/>
-          </div>
-          <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-            <input value={dmgInput} onChange={e=>setDmgInput(e.target.value)} placeholder="dmg"
-              onKeyDown={e=>e.key==="Enter"&&applyDmg()}
-              style={{ width:40, background:"rgba(139,26,26,.2)", border:"1px solid rgba(139,26,26,.4)",
-                borderRadius:3, color:"#ff8888", fontFamily:"'Cinzel',serif", fontSize:10,
-                padding:"1px 4px", outline:"none", textAlign:"center" }} />
-            <button onClick={applyDmg} style={{ background:"rgba(139,26,26,.35)", border:"1px solid rgba(139,26,26,.5)",
-              color:"#ff8888", borderRadius:3, cursor:"pointer", fontSize:9, padding:"1px 6px", fontFamily:"'Cinzel',serif" }}>
-              −HP
-            </button>
-            <input value={healInput} onChange={e=>setHealInput(e.target.value)} placeholder="heal"
-              onKeyDown={e=>e.key==="Enter"&&applyHeal()}
-              style={{ width:40, background:"rgba(76,175,80,.15)", border:"1px solid rgba(76,175,80,.35)",
-                borderRadius:3, color:"#88ff88", fontFamily:"'Cinzel',serif", fontSize:10,
-                padding:"1px 4px", outline:"none", textAlign:"center" }} />
-            <button onClick={applyHeal} style={{ background:"rgba(76,175,80,.2)", border:"1px solid rgba(76,175,80,.4)",
-              color:"#88ff88", borderRadius:3, cursor:"pointer", fontSize:9, padding:"1px 6px", fontFamily:"'Cinzel',serif" }}>
-              +HP
-            </button>
-          </div>
-        </div>
-
-        {/* Controls */}
-        <div style={{ display:"flex", flexDirection:"column", gap:3, alignItems:"center" }}>
-          <div style={{ display:"flex", gap:3 }}>
-            <button onClick={onMoveUp} disabled={index===0}
-              style={{ background:"none", border:"1px solid rgba(200,149,42,.3)", borderRadius:3,
-                color:"var(--gold)", cursor:"pointer", fontSize:10, padding:"0 5px", opacity:index===0?.3:1 }}>▲</button>
-            <button onClick={onMoveDown} disabled={index===totalCount-1}
-              style={{ background:"none", border:"1px solid rgba(200,149,42,.3)", borderRadius:3,
-                color:"var(--gold)", cursor:"pointer", fontSize:10, padding:"0 5px", opacity:index===totalCount-1?.3:1 }}>▼</button>
-            <button onClick={onRemove}
-              style={{ background:"none", border:"1px solid rgba(139,26,26,.4)", borderRadius:3,
-                color:"var(--cr)", cursor:"pointer", fontSize:10, padding:"0 5px" }}>✕</button>
-          </div>
-          <button onClick={()=>setShowCondPicker(!showCondPicker)}
-            style={{ background:"rgba(200,149,42,.1)", border:"1px solid rgba(200,149,42,.3)",
-              borderRadius:3, color:"var(--gold)", cursor:"pointer", fontSize:8, padding:"1px 6px",
-              fontFamily:"'Cinzel',serif", letterSpacing:.5, width:"100%" }}>
-            + Condition
-          </button>
-        </div>
-      </div>
-
-      {/* Conditions */}
-      {(combatant.conditions || []).length > 0 && (
-        <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:6 }}>
-          {combatant.conditions.map(c => (
-            <ConditionPip key={c} condId={c} onRemove={() => removeCondition(c)} />
-          ))}
+    <div
+      style={cellStyle}
+      onClick={() => onClick(x, y)}
+      onMouseDown={e => { e.preventDefault(); onMouseDown?.(x, y); }}
+      onMouseEnter={() => { setHovered(true); onCellMouseEnter?.(x, y); }}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {isWall && (
+        <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(45deg,rgba(92,51,23,.3) 0px,rgba(92,51,23,.3) 4px,transparent 4px,transparent 8px)" }} />
+      )}
+      {combatant && (
+        <div style={tokenStyle}>
+          {isDead ? "✕" : combatant.name.charAt(0).toUpperCase()}
         </div>
       )}
-
-      {/* Condition picker */}
-      {showCondPicker && (
-        <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:4,
-          background:"rgba(0,0,0,.4)", borderRadius:4, padding:8, border:"1px solid rgba(200,149,42,.2)" }}>
-          {CONDITIONS.filter(c => !(combatant.conditions||[]).includes(c.id)).map(c => (
-            <span key={c.id} onClick={() => addCondition(c.id)}
-              title={c.desc}
-              style={{ display:"inline-flex", alignItems:"center", gap:2,
-                background:c.color+"22", border:`1px solid ${c.color}55`,
-                borderRadius:3, padding:"1px 7px", fontSize:9, cursor:"pointer",
-                color:c.color, fontFamily:"'Cinzel',serif", letterSpacing:.5,
-                transition:"background .15s" }}
-              onMouseEnter={e=>e.currentTarget.style.background=c.color+"44"}
-              onMouseLeave={e=>e.currentTarget.style.background=c.color+"22"}
-            >
-              {c.icon} {c.name}
-            </span>
-          ))}
+      {showPlacingHint && <div style={placingHintStyle} />}
+      {combatant && hpBarStyle && (
+        <div style={hpBarStyle}>
+          <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpColor, borderRadius: 2, transition: "width .2s" }} />
         </div>
       )}
     </div>
   );
 }
 
-function AddCombatantModal({ characters, onAdd, onClose }) {
-  const [name, setName] = useState("");
-  const [type, setType] = useState("enemy");
-  const [initiative, setInitiative] = useState("");
-  const [hp, setHp] = useState("");
-  const [hpMax, setHpMax] = useState("");
-  const [ac, setAc] = useState("");
-  const [cr, setCr] = useState("");
-  const [count, setCount] = useState(1);
+// ─── Add Custom Modal ──────────────────────────────────────────────────────────
+function AddCustomModal({ onAdd, onClose }) {
+  const [form, setForm] = useState({ name: "", type: "enemy", count: 1, initiative: "", hp: 10, ac: 10, cr: "1" });
 
-  function submit() {
-    const base = {
-      type, ac: ac ? +ac : 10, cr,
-      conditions: [], isConcentrating: false,
-    };
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+  function handleAdd() {
+    if (!form.name.trim()) return;
+    const count = Math.max(1, parseInt(form.count) || 1);
     for (let i = 0; i < count; i++) {
-      const suffix = count > 1 ? ` ${i + 1}` : "";
-      const initVal = initiative ? +initiative : roll(20) + (type === "ally" ? 0 : 0);
-      const hpVal = hpMax ? +hpMax : hp ? +hp : 10;
+      const init = form.initiative !== "" ? parseInt(form.initiative) : rollD20();
       onAdd({
-        ...base,
-        id: genId(),
-        name: (name || (type === "enemy" ? "Enemy" : "Ally")) + suffix,
-        initiative: initVal,
-        hp: hpVal,
-        hpMax: hpVal,
+        name: count > 1 ? `${form.name.trim()} ${i + 1}` : form.name.trim(),
+        type: form.type,
+        initiative: init,
+        hp: parseInt(form.hp) || 10,
+        hpMax: parseInt(form.hp) || 10,
+        ac: parseInt(form.ac) || 10,
+        cr: form.cr,
+        dex: 10,
+        conditions: [],
+        isConcentrating: false,
       });
     }
     onClose();
   }
 
-  function addFromCharacter(c) {
-    const dex = c.abilities?.DEX || 10;
-    const dexMod = abMod(dex);
-    const init = rollInitiative(dexMod);
-    onAdd({
-      id: genId(),
-      name: c.name || "Hero",
-      type: "ally",
-      initiative: init,
-      hp: c.hp?.current || c.hp?.max || 10,
-      hpMax: c.hp?.max || 10,
-      ac: c.ac || 10,
-      conditions: [],
-      isConcentrating: false,
-      charId: c.id,
-    });
+  const overlay = {
+    position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 1000,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  };
+  const modal = {
+    background: "linear-gradient(135deg,#1a0802,#0e0400)", border: "2px solid var(--gold)",
+    borderRadius: 6, padding: 24, width: 380, maxWidth: "90vw",
+    boxShadow: "0 20px 60px rgba(0,0,0,.8)",
+  };
+  const grid2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
+  const fLabel = { ...sLabel, marginBottom: 3 };
+
+  function Field({ label, children }) {
+    return (
+      <div>
+        <span style={fLabel}>{label}</span>
+        {children}
+      </div>
+    );
   }
 
-  const iStyle = {
-    background:"rgba(245,230,200,.05)", border:"1px solid rgba(92,51,23,.4)",
-    borderRadius:3, color:"var(--vel)", fontFamily:"'IM Fell English',serif",
-    fontSize:13, padding:"4px 8px", outline:"none", width:"100%",
-  };
-  const lStyle = {
-    fontFamily:"'Cinzel',serif", fontSize:8, letterSpacing:1.5,
-    color:"var(--br)", textTransform:"uppercase", marginBottom:3,
-  };
-
-  return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.7)", zIndex:500,
-      display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:"#1a0a02", border:"2px solid var(--gold)", borderRadius:6,
-        padding:20, width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto",
-        boxShadow:"0 8px 40px rgba(0,0,0,.8)" }}>
-        <div style={{ fontFamily:"'Cinzel Decorative',serif", color:"var(--gold)", fontSize:14,
-          marginBottom:14, borderBottom:"1px solid rgba(200,149,42,.3)", paddingBottom:8 }}>
-          Add Combatant
+  return createPortal(
+    <div style={overlay} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={modal}>
+        <div style={{ fontFamily: "'Cinzel Decorative',serif", color: "var(--gold)", fontSize: 13, marginBottom: 16, textAlign: "center" }}>
+          ✦ Add Custom Combatant
         </div>
-
-        {/* From party */}
-        {characters.length > 0 && (
-          <div style={{ marginBottom:14 }}>
-            <div style={lStyle}>Add from Party</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-              {characters.map(c => (
-                <button key={c.id} onClick={() => { addFromCharacter(c); onClose(); }}
-                  style={{ background:"rgba(75,158,232,.15)", border:"1px solid rgba(75,158,232,.4)",
-                    borderRadius:3, color:"#88bbff", cursor:"pointer", fontFamily:"'Cinzel',serif",
-                    fontSize:10, padding:"4px 10px", letterSpacing:.5 }}>
-                  ⚔ {c.name || "Unnamed"}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
-          <div style={{ gridColumn:"1/-1" }}>
-            <div style={lStyle}>Name</div>
-            <input style={iStyle} value={name} onChange={e=>setName(e.target.value)} placeholder="Goblin, Dragon, etc." />
-          </div>
-          <div>
-            <div style={lStyle}>Type</div>
-            <select style={iStyle} value={type} onChange={e=>setType(e.target.value)}>
+        <div style={{ marginBottom: 10 }}>
+          <Field label="Name"><input style={sInput} value={form.name} onChange={e => set("name", e.target.value)} placeholder="Goblin Chief" /></Field>
+        </div>
+        <div style={{ ...grid2, marginBottom: 10 }}>
+          <Field label="Type">
+            <select style={sInput} value={form.type} onChange={e => set("type", e.target.value)}>
               <option value="enemy">Enemy</option>
               <option value="ally">Ally</option>
             </select>
-          </div>
-          <div>
-            <div style={lStyle}>Count</div>
-            <input type="number" style={iStyle} value={count} min={1} max={20} onChange={e=>setCount(Math.max(1,+e.target.value))} />
-          </div>
-          <div>
-            <div style={lStyle}>Initiative</div>
-            <input type="number" style={iStyle} value={initiative} onChange={e=>setInitiative(e.target.value)} placeholder="Roll on Add" />
-          </div>
-          <div>
-            <div style={lStyle}>Max HP</div>
-            <input type="number" style={iStyle} value={hpMax} onChange={e=>setHpMax(e.target.value)} placeholder="e.g. 27" />
-          </div>
-          <div>
-            <div style={lStyle}>AC</div>
-            <input type="number" style={iStyle} value={ac} onChange={e=>setAc(e.target.value)} placeholder="e.g. 15" />
-          </div>
-          <div>
-            <div style={lStyle}>CR (optional)</div>
-            <input style={iStyle} value={cr} onChange={e=>setCr(e.target.value)} placeholder="e.g. 2" />
-          </div>
+          </Field>
+          <Field label="Count">
+            <input style={sInput} type="number" min={1} max={20} value={form.count} onChange={e => set("count", e.target.value)} />
+          </Field>
+          <Field label="Initiative (blank=random)">
+            <input style={sInput} type="number" value={form.initiative} onChange={e => set("initiative", e.target.value)} placeholder="Random" />
+          </Field>
+          <Field label="Max HP">
+            <input style={sInput} type="number" min={1} value={form.hp} onChange={e => set("hp", e.target.value)} />
+          </Field>
+          <Field label="AC">
+            <input style={sInput} type="number" min={1} value={form.ac} onChange={e => set("ac", e.target.value)} />
+          </Field>
+          <Field label="CR">
+            <select style={sInput} value={form.cr} onChange={e => set("cr", e.target.value)}>
+              {CRS.filter(c => c !== "all").map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Field>
         </div>
-
-        <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}>
-          <button onClick={onClose} style={{ background:"none", border:"1px solid rgba(92,51,23,.5)",
-            color:"var(--br)", borderRadius:3, cursor:"pointer", fontFamily:"'Cinzel',serif",
-            fontSize:10, padding:"6px 16px", letterSpacing:1 }}>
-            Cancel
-          </button>
-          <button onClick={submit} style={{ background:"var(--gold)", border:"none",
-            color:"var(--ink)", borderRadius:3, cursor:"pointer", fontFamily:"'Cinzel',serif",
-            fontSize:10, padding:"6px 20px", fontWeight:700, letterSpacing:1 }}>
-            ✦ Add
-          </button>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 16 }}>
+          <button style={sBtnGold} onClick={handleAdd}>✦ Add</button>
+          <button style={sBtnSec} onClick={onClose}>Cancel</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
-export default function CombatTracker({ characters, combat, onChange, pendingCombatant, onClearPending, pendingCombatants, onClearPendingAll }) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [round, setRound] = useState(combat?.round || 1);
-  const [activeIdx, setActiveIdx] = useState(combat?.activeIdx || 0);
-  const [combatants, setCombatants] = useState(combat?.combatants || []);
-  const [log, setLog] = useState(combat?.log || []);
+// ─── Main CombatTracker ────────────────────────────────────────────────────────
+export default function CombatTracker({
+  characters = [],
+  customMonsters = [],
+  pendingCombatant,
+  onClearPending,
+  pendingCombatants,
+  onClearPendingAll,
+  initialState = null,
+  onSaveState,
+}) {
+  // Core combat state — hydrate from persisted state if available
+  const [combatants, setCombatants] = useState(() => initialState?.combatants || []);
+  const [round, setRound] = useState(() => initialState?.round || 1);
+  const [activeIdx, setActiveIdx] = useState(() => initialState?.activeIdx || 0);
+  const [log, setLog] = useState(() => initialState?.log || []);
 
-  // Auto-add single monster from compendium
-  useEffect(() => {
-    if (!pendingCombatant) return;
-    const hpVal = pendingCombatant.hp || 10;
-    setCombatants(prev => [...prev, {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
-      name: pendingCombatant.name,
-      type: "enemy",
-      initiative: Math.floor(Math.random() * 20) + 1,
-      hp: hpVal,
-      hpMax: hpVal,
-      ac: pendingCombatant.ac || 10,
-      cr: pendingCombatant.cr || "",
-      conditions: [],
-      isConcentrating: false,
-    }]);
-    onClearPending?.();
-  }, [pendingCombatant]);
+  // Grid state
+  const [tokens, setTokens] = useState(() => initialState?.tokens || {});
+  const [walls, setWalls] = useState(() => new Set(initialState?.walls || []));
+  const [cols, setCols] = useState(() => initialState?.cols || 22);
+  const [rows, setRows] = useState(() => initialState?.rows || 16);
+  const [cellSize, setCellSize] = useState(() => initialState?.cellSize || "M");
 
-  // Auto-add multiple monsters from encounter builder
-  useEffect(() => {
-    if (!pendingCombatants?.length) return;
-    const newCombatants = pendingCombatants.map(m => ({
-      id: `${Date.now()}_${Math.random().toString(36).slice(2,6)}_${Math.random().toString(36).slice(2,4)}`,
-      name: m.name,
-      type: "enemy",
-      initiative: Math.floor(Math.random() * 20) + 1,
-      hp: m.hp || 10,
-      hpMax: m.hp || 10,
-      ac: m.ac || 10,
-      cr: m.cr || "",
-      conditions: [],
-      isConcentrating: false,
-    }));
-    setCombatants(prev => [...prev, ...newCombatants]);
-    onClearPendingAll?.();
-  }, [pendingCombatants]);
+  // Drag-to-draw wall refs
+  const isDragging = useRef(false);
+  const dragAdding = useRef(true);
 
-  const sorted = [...combatants].sort((a, b) => b.initiative - a.initiative);
+  // UI state
+  const [selected, setSelected] = useState(null);
+  const [placingId, setPlacingId] = useState(null);
+  const [editMode, setEditMode] = useState("move");
+  const [sideTab, setSideTab] = useState("party");
+  const [showAddModal, setShowAddModal] = useState(false);
 
+  // Monster filter state
+  const [monsterSearch, setMonsterSearch] = useState("");
+  const [monsterCr, setMonsterCr] = useState("all");
+
+  // HP edit inputs for selected combatant
+  const [dmgInput, setDmgInput] = useState("");
+  const [healInput, setHealInput] = useState("");
+  const [showAllConds, setShowAllConds] = useState(false);
+
+  const px = cellSize === "S" ? 28 : cellSize === "L" ? 56 : 40;
+
+  // Reverse token lookup: combatantId -> "x,y"
+  const tokenPos = useMemo(() => {
+    const map = {};
+    for (const [key, cid] of Object.entries(tokens)) map[cid] = key;
+    return map;
+  }, [tokens]);
+
+  const sortedCombatants = useMemo(() =>
+    [...combatants].sort((a, b) => b.initiative - a.initiative),
+    [combatants]
+  );
+
+  const activeId = sortedCombatants[activeIdx]?.id ?? null;
+
+  const allMonsters = useMemo(() =>
+    [...MONSTERS, ...customMonsters].sort((a, b) => CR_SORT(a.cr) - CR_SORT(b.cr)),
+    [customMonsters]
+  );
+
+  const filteredMonsters = useMemo(() => {
+    let list = allMonsters;
+    if (monsterCr !== "all") list = list.filter(m => m.cr === monsterCr);
+    if (monsterSearch.trim()) {
+      const q = monsterSearch.toLowerCase();
+      list = list.filter(m => m.name.toLowerCase().includes(q));
+    }
+    return list.slice(0, 60);
+  }, [allMonsters, monsterSearch, monsterCr]);
+
+  // ─── Log helper ─────────────────────────────────────────────────────────────
   function addLog(msg) {
-    setLog(prev => [`Round ${round}: ${msg}`, ...prev.slice(0, 49)]);
+    setLog(l => [msg, ...l].slice(0, 60));
   }
 
+  // ─── Add combatant ──────────────────────────────────────────────────────────
+  function addCombatant(data) {
+    const id = genId();
+    const newC = {
+      id,
+      name: data.name || "Unknown",
+      type: data.type || "enemy",
+      initiative: data.initiative ?? rollD20(),
+      hp: data.hp ?? data.hpMax ?? 10,
+      hpMax: data.hpMax ?? data.hp ?? 10,
+      ac: data.ac ?? 10,
+      cr: data.cr ?? "0",
+      dex: data.dex ?? 10,
+      conditions: [],
+      isConcentrating: false,
+      charId: data.charId,
+    };
+    setCombatants(cs => [...cs, newC]);
+    addLog(`${newC.name} joins the battle (Init: ${newC.initiative})`);
+    return id;
+  }
+
+  // ─── Update combatant ────────────────────────────────────────────────────────
   function updateCombatant(id, patch) {
-    setCombatants(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
-    if (patch.hp !== undefined) {
-      const c = combatants.find(x => x.id === id);
-      if (c) {
-        const diff = patch.hp - c.hp;
-        addLog(`${c.name}: ${diff < 0 ? `${Math.abs(diff)} damage` : `healed ${diff}`} → ${patch.hp}/${c.hpMax} HP`);
+    setCombatants(cs => cs.map(c => c.id === id ? { ...c, ...patch } : c));
+  }
+
+  // ─── Remove combatant ────────────────────────────────────────────────────────
+  function removeCombatant(id) {
+    setCombatants(cs => cs.filter(c => c.id !== id));
+    setTokens(t => {
+      const next = { ...t };
+      for (const [k, v] of Object.entries(next)) if (v === id) delete next[k];
+      return next;
+    });
+    if (selected === id) setSelected(null);
+    if (placingId === id) setPlacingId(null);
+  }
+
+  function removeFromGrid(id) {
+    setTokens(t => {
+      const next = { ...t };
+      for (const [k, v] of Object.entries(next)) if (v === id) delete next[k];
+      return next;
+    });
+  }
+
+  // ─── Drag wall handlers ──────────────────────────────────────────────────────
+  function handleCellMouseDown(x, y) {
+    if (editMode !== "wall") return;
+    const key = `${x},${y}`;
+    if (tokens[key]) return; // don't wall over tokens
+    isDragging.current = true;
+    const willAdd = !walls.has(key);
+    dragAdding.current = willAdd;
+    setWalls(w => {
+      const next = new Set(w);
+      if (willAdd) next.add(key); else next.delete(key);
+      return next;
+    });
+  }
+
+  function handleCellMouseEnter(x, y) {
+    if (!isDragging.current || editMode !== "wall") return;
+    const key = `${x},${y}`;
+    if (tokens[key]) return;
+    setWalls(w => {
+      const next = new Set(w);
+      if (dragAdding.current) next.add(key); else next.delete(key);
+      return next;
+    });
+  }
+
+  // ─── Cell click ─────────────────────────────────────────────────────────────
+  function handleCellClick(x, y) {
+    const key = `${x},${y}`;
+    const occupant = tokens[key];
+    const isWallCell = walls.has(key);
+
+    if (editMode === "wall") {
+      // Wall toggling handled by mousedown/mouseenter drag system
+      return;
+      return;
+    }
+
+    if (editMode === "erase") {
+      if (occupant) {
+        removeFromGrid(occupant);
+      } else {
+        setWalls(w => { const next = new Set(w); next.delete(key); return next; });
       }
+      return;
+    }
+
+    // move mode
+    if (placingId) {
+      if (!occupant && !isWallCell) {
+        setTokens(t => {
+          const next = { ...t };
+          for (const [k, v] of Object.entries(next)) if (v === placingId) delete next[k];
+          next[key] = placingId;
+          return next;
+        });
+        const c = combatants.find(c => c.id === placingId);
+        const colLabel = x + 1;
+        const rowLabel = String.fromCharCode(65 + y);
+        addLog(`${c?.name ?? "?"} placed at ${rowLabel}${colLabel}`);
+        setPlacingId(null);
+      }
+      return;
+    }
+
+    if (occupant) {
+      setSelected(s => s === occupant ? null : occupant);
+    } else if (selected && !isWallCell) {
+      // Move selected token
+      const c = combatants.find(c => c.id === selected);
+      setTokens(t => {
+        const next = { ...t };
+        for (const [k, v] of Object.entries(next)) if (v === selected) delete next[k];
+        next[key] = selected;
+        return next;
+      });
+      const colLabel = x + 1;
+      const rowLabel = String.fromCharCode(65 + y);
+      addLog(`${c?.name ?? "?"} moves to ${rowLabel}${colLabel}`);
     }
   }
 
-  function removeCombatant(id) {
-    setCombatants(prev => prev.filter(c => c.id !== id));
-    if (activeIdx >= combatants.length - 1) setActiveIdx(0);
-  }
-
+  // ─── Next turn ───────────────────────────────────────────────────────────────
   function nextTurn() {
-    const alive = sorted.filter(c => c.hp > 0);
-    if (alive.length === 0) return;
-    const nextIdx = (activeIdx + 1) % sorted.length;
-    if (nextIdx < activeIdx) {
+    if (sortedCombatants.length === 0) return;
+    const nextIdx = (activeIdx + 1) % sortedCombatants.length;
+    if (nextIdx === 0) {
       setRound(r => r + 1);
       addLog(`── Round ${round + 1} begins ──`);
     }
     setActiveIdx(nextIdx);
-    addLog(`${sorted[nextIdx]?.name}'s turn`);
+    const next = sortedCombatants[nextIdx];
+    if (next) addLog(`${next.name}'s turn`);
   }
 
+  // ─── Roll initiatives ────────────────────────────────────────────────────────
+  function rollAllInit() {
+    setCombatants(cs => cs.map(c => ({ ...c, initiative: rollD20() + abMod(c.dex) })));
+    setActiveIdx(0);
+    addLog("Initiatives re-rolled for all combatants");
+  }
+
+  // ─── Reset ───────────────────────────────────────────────────────────────────
   function resetCombat() {
-    if (!confirm("Reset combat? This will clear all combatants and the log.")) return;
-    setCombatants([]); setLog([]); setRound(1); setActiveIdx(0);
+    setCombatants([]);
+    setRound(1);
+    setActiveIdx(0);
+    setLog([]);
+    setTokens({});
+    setWalls(new Set());
+    setSelected(null);
+    setPlacingId(null);
   }
 
-  function moveCombatant(idx, dir) {
-    const newList = [...combatants];
-    const targetIdx = idx + dir;
-    if (targetIdx < 0 || targetIdx >= newList.length) return;
-    [newList[idx], newList[targetIdx]] = [newList[targetIdx], newList[idx]];
-    setCombatants(newList);
+  // ─── Keyboard ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") {
+        setPlacingId(null);
+        setSelected(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // ─── Stop drag on global mouseup ─────────────────────────────────────────────
+  useEffect(() => {
+    const onUp = () => { isDragging.current = false; };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, []);
+
+  // ─── Persist combat state (debounced 1.5s) ───────────────────────────────────
+  useEffect(() => {
+    if (!onSaveState) return;
+    const timer = setTimeout(() => {
+      onSaveState({
+        combatants,
+        round,
+        activeIdx,
+        log: log.slice(0, 30),
+        tokens,
+        walls: [...walls],
+        cols,
+        rows,
+        cellSize,
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [combatants, round, activeIdx, log, tokens, walls, cols, rows, cellSize]); // eslint-disable-line
+
+  // ─── Auto-add pending combatants ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!pendingCombatant) return;
+    const m = pendingCombatant;
+    addCombatant({
+      name: m.name,
+      type: "enemy",
+      initiative: rollD20() + abMod(m.dex),
+      hp: m.hp,
+      hpMax: m.hp,
+      ac: m.ac,
+      cr: m.cr,
+      dex: m.dex,
+    });
+    onClearPending?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCombatant]);
+
+  useEffect(() => {
+    if (!pendingCombatants?.length) return;
+    pendingCombatants.forEach(m => addCombatant({
+      name: m.name,
+      type: "enemy",
+      initiative: rollD20() + abMod(m.dex),
+      hp: m.hp,
+      hpMax: m.hp,
+      ac: m.ac,
+      cr: m.cr,
+      dex: m.dex,
+    }));
+    onClearPendingAll?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCombatants]);
+
+  // ─── Selected combatant helpers ──────────────────────────────────────────────
+  const selectedCombatant = combatants.find(c => c.id === selected) ?? null;
+
+  function applyDmg() {
+    if (!selectedCombatant) return;
+    const n = parseInt(dmgInput);
+    if (isNaN(n) || n <= 0) return;
+    const newHp = Math.max(0, selectedCombatant.hp - n);
+    updateCombatant(selected, { hp: newHp });
+    addLog(`${selectedCombatant.name} takes ${n} damage (${newHp}/${selectedCombatant.hpMax} HP)`);
+    setDmgInput("");
   }
 
-  function rollAllInitiatives() {
-    setCombatants(prev => prev.map(c => ({ ...c, initiative: roll(20) })));
-    addLog("Rolled initiative for all combatants");
+  function applyHeal() {
+    if (!selectedCombatant) return;
+    const n = parseInt(healInput);
+    if (isNaN(n) || n <= 0) return;
+    const newHp = Math.min(selectedCombatant.hpMax, selectedCombatant.hp + n);
+    updateCombatant(selected, { hp: newHp });
+    addLog(`${selectedCombatant.name} healed for ${n} (${newHp}/${selectedCombatant.hpMax} HP)`);
+    setHealInput("");
   }
 
-  const enemies = sorted.filter(c => c.type === "enemy");
-  const allies = sorted.filter(c => c.type === "ally");
-  const totalXP = enemies.reduce((sum, c) => {
-    const xpMap = {"0":10,"1/8":25,"1/4":50,"1/2":100,"1":200,"2":450,"3":700,"4":1100,"5":1800,"6":2300,"7":2900,"8":3900,"9":5000,"10":5900};
-    return sum + (xpMap[c.cr] || 0);
-  }, 0);
+  function toggleCondition(condId) {
+    if (!selectedCombatant) return;
+    const has = selectedCombatant.conditions.includes(condId);
+    const next = has
+      ? selectedCombatant.conditions.filter(c => c !== condId)
+      : [...selectedCombatant.conditions, condId];
+    updateCombatant(selected, { conditions: next });
+  }
 
-  return (
-    <div style={{ display:"flex", gap:14, flexWrap:"wrap" }}>
-      {/* Main tracker */}
-      <div style={{ flex:2, minWidth:300 }}>
-        {/* Header bar */}
-        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, flexWrap:"wrap" }}>
-          <div style={{ fontFamily:"'Cinzel Decorative',serif", color:"var(--gold)", fontSize:13 }}>
-            ⚔ Round {round}
-          </div>
-          {totalXP > 0 && (
-            <div style={{ fontFamily:"'Cinzel',serif", fontSize:9, color:"rgba(200,149,42,.6)", letterSpacing:1 }}>
-              {totalXP.toLocaleString()} XP
-            </div>
-          )}
-          <div style={{ marginLeft:"auto", display:"flex", gap:6, flexWrap:"wrap" }}>
-            <button onClick={rollAllInitiatives}
-              style={{ background:"rgba(200,149,42,.1)", border:"1px solid rgba(200,149,42,.4)",
-                color:"var(--gold)", borderRadius:3, cursor:"pointer", fontFamily:"'Cinzel',serif",
-                fontSize:9, padding:"4px 10px", letterSpacing:.5 }}>🎲 Roll All</button>
-            <button onClick={() => setShowAdd(true)}
-              style={{ background:"rgba(200,149,42,.15)", border:"1px solid var(--gold)",
-                color:"var(--gold)", borderRadius:3, cursor:"pointer", fontFamily:"'Cinzel',serif",
-                fontSize:9, padding:"4px 12px", letterSpacing:.5, fontWeight:700 }}>+ Add</button>
-            <button onClick={nextTurn}
-              style={{ background:"var(--gold)", border:"none", color:"var(--ink)",
-                borderRadius:3, cursor:"pointer", fontFamily:"'Cinzel',serif",
-                fontSize:10, padding:"4px 14px", fontWeight:700, letterSpacing:.5 }}>Next Turn ▶</button>
-            <button onClick={resetCombat}
-              style={{ background:"rgba(139,26,26,.2)", border:"1px solid rgba(139,26,26,.4)",
-                color:"var(--cr)", borderRadius:3, cursor:"pointer", fontFamily:"'Cinzel',serif",
-                fontSize:9, padding:"4px 10px", letterSpacing:.5 }}>✕ Reset</button>
-          </div>
+  // ─── Derived ─────────────────────────────────────────────────────────────────
+  const selHpPct = selectedCombatant ? Math.max(0, Math.min(1, selectedCombatant.hp / selectedCombatant.hpMax)) : 1;
+  const selHpColor = selHpPct > 0.5 ? "#4caf50" : selHpPct > 0.25 ? "#e8a44b" : "#e84b4b";
+  const selPos = selectedCombatant ? tokenPos[selectedCombatant.id] : null;
+  const selOnGrid = !!selPos;
+
+  // ─── Render helpers ──────────────────────────────────────────────────────────
+  const modeBtn = (mode, label) => (
+    <button
+      style={{
+        ...sBtnSec,
+        background: editMode === mode ? "rgba(200,149,42,.3)" : "rgba(200,149,42,.08)",
+        borderColor: editMode === mode ? "var(--gold)" : "rgba(200,149,42,.3)",
+        color: editMode === mode ? "var(--gold)" : "rgba(200,149,42,.6)",
+      }}
+      onClick={() => setEditMode(mode)}
+    >{label}</button>
+  );
+
+  const sizeBtn = (sz) => (
+    <button
+      style={{
+        ...sBtnSec,
+        padding: "5px 8px",
+        background: cellSize === sz ? "rgba(200,149,42,.3)" : "rgba(200,149,42,.08)",
+        borderColor: cellSize === sz ? "var(--gold)" : "rgba(200,149,42,.3)",
+        color: cellSize === sz ? "var(--gold)" : "rgba(200,149,42,.6)",
+      }}
+      onClick={() => setCellSize(sz)}
+    >{sz}</button>
+  );
+
+  // ─── Grid ────────────────────────────────────────────────────────────────────
+  const columnLabels = (
+    <div style={{ display: "flex", paddingLeft: 24 }}>
+      {Array.from({ length: cols }, (_, x) => (
+        <div key={x} style={{ width: px, flexShrink: 0, textAlign: "center", fontFamily: "'Cinzel',serif", fontSize: 8, color: "rgba(200,149,42,.35)", letterSpacing: 0.5, lineHeight: "16px" }}>
+          {x + 1}
         </div>
+      ))}
+    </div>
+  );
 
-        {/* Combatant list */}
-        {sorted.length === 0 ? (
-          <div style={{ textAlign:"center", padding:"40px 20px", color:"rgba(245,230,200,.3)",
-            fontFamily:"'IM Fell English',serif", fontStyle:"italic", fontSize:14,
-            border:"1px dashed rgba(92,51,23,.3)", borderRadius:4 }}>
-            No combatants yet. Add enemies or party members to begin.
-          </div>
-        ) : (
-          sorted.map((c, i) => (
-            <CombatantRow
-              key={c.id}
-              combatant={c}
-              isActive={i === activeIdx}
-              index={i}
-              totalCount={sorted.length}
-              onUpdate={patch => updateCombatant(c.id, patch)}
-              onRemove={() => removeCombatant(c.id)}
-              onMoveUp={() => moveCombatant(i, -1)}
-              onMoveDown={() => moveCombatant(i, 1)}
+  const gridRows = Array.from({ length: rows }, (_, y) => {
+    const rowLabel = String.fromCharCode(65 + y);
+    return (
+      <div key={y} style={{ display: "flex", alignItems: "center" }}>
+        <div style={{ width: 20, flexShrink: 0, textAlign: "right", paddingRight: 4, fontFamily: "'Cinzel',serif", fontSize: 8, color: "rgba(200,149,42,.35)", lineHeight: `${px}px` }}>
+          {rowLabel}
+        </div>
+        {Array.from({ length: cols }, (_, x) => {
+          const key = `${x},${y}`;
+          const cid = tokens[key];
+          const combatant = cid ? combatants.find(c => c.id === cid) : null;
+          return (
+            <Cell
+              key={key}
+              x={x} y={y} px={px}
+              combatant={combatant}
+              isActive={cid === activeId}
+              isSelected={cid === selected || key === (selected && tokenPos[selected])}
+              isWall={walls.has(key)}
+              placingId={placingId}
+              editMode={editMode}
+              onClick={handleCellClick}
+              onMouseDown={handleCellMouseDown}
+              onCellMouseEnter={handleCellMouseEnter}
             />
-          ))
+          );
+        })}
+      </div>
+    );
+  });
+
+  // ─── Toolbar ─────────────────────────────────────────────────────────────────
+  const activeC = sortedCombatants[activeIdx];
+  const toolbar = (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(14,4,0,.8)", border: "1px solid rgba(92,51,23,.4)", borderRadius: 4, padding: "8px 12px", flexWrap: "wrap" }}>
+      <div style={{ fontFamily: "'Cinzel Decorative',serif", color: "var(--gold)", fontSize: 12, whiteSpace: "nowrap" }}>
+        ⚔ Round {round}
+        {activeC && (
+          <span style={{ fontFamily: "'IM Fell English',serif", fontSize: 11, color: "var(--vel)", marginLeft: 10 }}>
+            — {activeC.name}'s turn
+          </span>
         )}
       </div>
 
-      {/* Sidebar: log + summary */}
-      <div style={{ flex:1, minWidth:220, display:"flex", flexDirection:"column", gap:10 }}>
-        {/* Combat summary */}
-        {(enemies.length > 0 || allies.length > 0) && (
-          <div style={{ background:"rgba(26,10,2,.7)", border:"1px solid rgba(92,51,23,.4)", borderRadius:4, padding:10 }}>
-            <div style={{ fontFamily:"'Cinzel',serif", fontSize:9, letterSpacing:1.5, color:"var(--gold)", textTransform:"uppercase", marginBottom:8 }}>Summary</div>
-            {allies.length > 0 && (
-              <div style={{ marginBottom:6 }}>
-                <div style={{ fontSize:8, color:"#88bbff", fontFamily:"'Cinzel',serif", letterSpacing:1, marginBottom:3 }}>ALLIES ({allies.length})</div>
-                {allies.map(c => (
-                  <div key={c.id} style={{ display:"flex", justifyContent:"space-between", fontSize:10, color: c.hp <= 0 ? "rgba(245,230,200,.3)" : "var(--vel)", fontFamily:"'Cinzel',serif", padding:"1px 0" }}>
-                    <span style={{ textDecoration: c.hp <= 0 ? "line-through" : "none" }}>{c.name}</span>
-                    <span style={{ color: c.hp / c.hpMax > .5 ? "#4caf50" : c.hp > 0 ? "#e8a44b" : "#e84b4b" }}>
-                      {c.hp <= 0 ? "Down" : `${c.hp}/${c.hpMax}`}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {enemies.length > 0 && (
-              <div>
-                <div style={{ fontSize:8, color:"#ff8888", fontFamily:"'Cinzel',serif", letterSpacing:1, marginBottom:3 }}>ENEMIES ({enemies.length})</div>
-                {enemies.map(c => (
-                  <div key={c.id} style={{ display:"flex", justifyContent:"space-between", fontSize:10, color: c.hp <= 0 ? "rgba(245,230,200,.3)" : "var(--vel)", fontFamily:"'Cinzel',serif", padding:"1px 0" }}>
-                    <span style={{ textDecoration: c.hp <= 0 ? "line-through" : "none" }}>{c.name}</span>
-                    <span style={{ color: c.hp <= 0 ? "#e84b4b" : "rgba(245,230,200,.5)" }}>
-                      {c.hp <= 0 ? "Dead" : "···"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+      {placingId && (
+        <div style={{ fontFamily: "'Cinzel',serif", fontSize: 9, color: "#4a90e2", letterSpacing: 1, animation: "pulse 1.2s ease-in-out infinite", padding: "0 8px" }}>
+          Placing: {combatants.find(c => c.id === placingId)?.name ?? "?"} — click an empty cell
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: "auto", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          {modeBtn("move", "↖ Move")}
+          {modeBtn("wall", "🧱 Wall")}
+          {modeBtn("erase", "✕ Erase")}
+        </div>
+        <div style={{ display: "flex", gap: 3 }}>
+          {sizeBtn("S")}{sizeBtn("M")}{sizeBtn("L")}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={sLabel}>W</span>
+          <input type="number" min={5} max={40} value={cols} onChange={e => setCols(Math.max(5, Math.min(40, parseInt(e.target.value) || 22)))}
+            style={{ ...sInput, width: 44, textAlign: "center", padding: "3px 4px", fontSize: 12 }} />
+          <span style={{ color: "rgba(200,149,42,.4)", fontSize: 10 }}>×</span>
+          <span style={sLabel}>H</span>
+          <input type="number" min={5} max={30} value={rows} onChange={e => setRows(Math.max(5, Math.min(30, parseInt(e.target.value) || 16)))}
+            style={{ ...sInput, width: 44, textAlign: "center", padding: "3px 4px", fontSize: 12 }} />
+        </div>
+        <button style={sBtnSec} onClick={rollAllInit}>🎲 Roll Init</button>
+        <button style={sBtnGold} onClick={nextTurn}>Next Turn ▶</button>
+        <button style={sBtnDng} onClick={resetCombat}>✕ Reset</button>
+      </div>
+
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
+    </div>
+  );
+
+  // ─── Sidebar: Initiative list ─────────────────────────────────────────────────
+  const initiativeList = (
+    <div style={sPanel}>
+      <span style={sLabel}>Initiative Order</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        {sortedCombatants.length === 0 && (
+          <div style={{ fontFamily: "'IM Fell English',serif", fontSize: 11, color: "rgba(245,230,200,.3)", fontStyle: "italic", textAlign: "center", padding: "8px 0" }}>
+            No combatants yet
           </div>
         )}
+        {sortedCombatants.map((c, idx) => {
+          const isAct = idx === activeIdx;
+          const isDead = c.hp <= 0;
+          const onGrid = !!tokenPos[c.id];
+          const isSel = selected === c.id;
+          const hpPct = c.hpMax > 0 ? Math.max(0, Math.min(1, c.hp / c.hpMax)) : 0;
+          const hpColor = hpPct > 0.5 ? "#4caf50" : hpPct > 0.25 ? "#e8a44b" : "#e84b4b";
+          return (
+            <div
+              key={c.id}
+              onClick={() => setSelected(s => s === c.id ? null : c.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 5, padding: "4px 6px",
+                background: isSel ? "rgba(200,149,42,.12)" : isAct ? "rgba(200,149,42,.07)" : "transparent",
+                border: `1px solid ${isSel ? "rgba(200,149,42,.4)" : isAct ? "rgba(200,149,42,.2)" : "transparent"}`,
+                borderRadius: 3, cursor: "pointer",
+              }}
+            >
+              {/* Initiative badge */}
+              <div style={{
+                width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                background: isAct ? "var(--gold)" : "rgba(200,149,42,.15)",
+                border: `1px solid ${isAct ? "var(--gold)" : "rgba(200,149,42,.3)"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "'Cinzel',serif", fontSize: 9, fontWeight: 700,
+                color: isAct ? "var(--ink)" : "var(--gold)",
+              }}>{c.initiative}</div>
 
-        {/* Combat log */}
-        <div style={{ background:"rgba(26,10,2,.7)", border:"1px solid rgba(92,51,23,.4)", borderRadius:4, padding:10, flex:1 }}>
-          <div style={{ fontFamily:"'Cinzel',serif", fontSize:9, letterSpacing:1.5, color:"var(--gold)", textTransform:"uppercase", marginBottom:8 }}>Combat Log</div>
-          {log.length === 0 ? (
-            <div style={{ fontSize:10, color:"rgba(245,230,200,.25)", fontStyle:"italic", fontFamily:"'IM Fell English',serif" }}>Events will appear here…</div>
-          ) : (
-            <div style={{ maxHeight:300, overflowY:"auto" }}>
-              {log.map((entry, i) => (
-                <div key={i} style={{ fontSize:10, color: i === 0 ? "var(--vel)" : "rgba(245,230,200,.45)",
-                  fontFamily:"'IM Fell English',serif", padding:"2px 0",
-                  borderBottom: i < log.length-1 ? "1px solid rgba(92,51,23,.15)" : "none" }}>
-                  {entry}
+              {/* Type icon */}
+              <span style={{ fontSize: 11 }}>{isDead ? "💀" : c.type === "enemy" ? "🗡️" : "🛡️"}</span>
+
+              {/* Name + HP bar */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Cinzel',serif", fontSize: 9, color: isDead ? "#666" : "var(--vel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {c.name}
                 </div>
-              ))}
+                <div style={{ height: 3, background: "rgba(0,0,0,.4)", borderRadius: 2, marginTop: 2 }}>
+                  <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpColor, borderRadius: 2, transition: "width .2s" }} />
+                </div>
+              </div>
+
+              {/* Grid badge */}
+              {onGrid
+                ? <span style={{ fontFamily: "'Cinzel',serif", fontSize: 7, color: "rgba(200,149,42,.4)", letterSpacing: 0.5, flexShrink: 0 }}>ON GRID</span>
+                : <button
+                    onClick={e => { e.stopPropagation(); setPlacingId(c.id); setSelected(null); setEditMode("move"); }}
+                    style={{ ...sBtnSec, padding: "2px 6px", fontSize: 7, flexShrink: 0 }}
+                  >Place</button>
+              }
+
+              {/* Remove */}
+              <button
+                onClick={e => { e.stopPropagation(); removeCombatant(c.id); }}
+                style={{ background: "none", border: "none", color: "rgba(200,149,42,.3)", cursor: "pointer", fontSize: 12, padding: "0 2px", flexShrink: 0 }}
+              >✕</button>
             </div>
-          )}
+          );
+        })}
+      </div>
+
+      {/* Tab buttons */}
+      <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+        <button style={{ ...sBtnSec, flex: 1, padding: "4px 0", fontSize: 8, background: sideTab === "party" ? "rgba(200,149,42,.25)" : undefined }} onClick={() => setSideTab("party")}>+ Party</button>
+        <button style={{ ...sBtnSec, flex: 1, padding: "4px 0", fontSize: 8, background: sideTab === "monsters" ? "rgba(200,149,42,.25)" : undefined }} onClick={() => setSideTab("monsters")}>+ Monsters</button>
+        <button style={{ ...sBtnSec, flex: 1, padding: "4px 0", fontSize: 8 }} onClick={() => setShowAddModal(true)}>Custom</button>
+      </div>
+    </div>
+  );
+
+  // ─── Sidebar: Add panel ──────────────────────────────────────────────────────
+  const partyPanel = (
+    <div style={sPanel}>
+      <span style={sLabel}>Party</span>
+      {characters.length === 0 && (
+        <div style={{ fontFamily: "'IM Fell English',serif", fontSize: 11, color: "rgba(245,230,200,.3)", fontStyle: "italic" }}>No characters saved</div>
+      )}
+      {characters.map(ch => {
+        const inCombat = combatants.some(c => c.charId === ch.id);
+        const hpPct = ch.hpMax > 0 ? Math.max(0, Math.min(1, (ch.hp ?? ch.hpMax) / ch.hpMax)) : 1;
+        const hpColor = hpPct > 0.5 ? "#4caf50" : hpPct > 0.25 ? "#e8a44b" : "#e84b4b";
+        return (
+          <div key={ch.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5, padding: "4px 6px", background: "rgba(245,230,200,.03)", borderRadius: 3, border: "1px solid rgba(92,51,23,.3)" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: "'Cinzel',serif", fontSize: 10, color: inCombat ? "rgba(245,230,200,.35)" : "var(--vel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {ch.name}
+              </div>
+              <div style={{ height: 3, background: "rgba(0,0,0,.4)", borderRadius: 2, marginTop: 2, width: "100%" }}>
+                <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpColor, borderRadius: 2 }} />
+              </div>
+            </div>
+            {inCombat
+              ? <span style={{ fontFamily: "'Cinzel',serif", fontSize: 7, color: "rgba(200,149,42,.35)", letterSpacing: 0.5 }}>IN COMBAT</span>
+              : <button style={{ ...sBtnSec, padding: "3px 8px", fontSize: 8 }} onClick={() => {
+                  const dex = ch.dex ?? 10;
+                  addCombatant({ name: ch.name, type: "ally", initiative: rollD20() + abMod(dex), hp: ch.hp ?? ch.hpMax ?? 20, hpMax: ch.hpMax ?? 20, ac: ch.ac ?? 10, cr: "—", dex, charId: ch.id });
+                }}>⚔ Add</button>
+            }
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const monstersPanel = (
+    <div style={sPanel}>
+      <span style={sLabel}>Monsters</span>
+      <input
+        style={{ ...sInput, marginBottom: 5 }}
+        placeholder="Search monsters..."
+        value={monsterSearch}
+        onChange={e => setMonsterSearch(e.target.value)}
+      />
+      <select style={{ ...sInput, marginBottom: 6 }} value={monsterCr} onChange={e => setMonsterCr(e.target.value)}>
+        {CRS.map(c => <option key={c} value={c}>{c === "all" ? "All CRs" : `CR ${c}`}</option>)}
+      </select>
+      <div style={{ maxHeight: 220, overflowY: "auto" }}>
+        {filteredMonsters.map(m => (
+          <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 5px", marginBottom: 2, background: "rgba(245,230,200,.03)", borderRadius: 3, border: "1px solid rgba(92,51,23,.25)" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: "'Cinzel',serif", fontSize: 9, color: "var(--vel)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.name}</div>
+              <div style={{ fontFamily: "'IM Fell English',serif", fontSize: 9, color: "rgba(200,149,42,.45)" }}>CR {m.cr} · AC {m.ac} · {m.hp} HP</div>
+            </div>
+            <button
+              style={{ ...sBtnGold, padding: "3px 8px", fontSize: 11, lineHeight: 1 }}
+              onClick={() => addCombatant({ name: m.name, type: "enemy", initiative: rollD20() + abMod(m.dex), hp: m.hp, hpMax: m.hp, ac: m.ac, cr: m.cr, dex: m.dex })}
+            >+</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // ─── Sidebar: Selected combatant panel ───────────────────────────────────────
+  const selectedPanel = selectedCombatant && (
+    <div style={sPanel}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8 }}>
+        <span style={{ fontSize: 14 }}>{selectedCombatant.hp <= 0 ? "💀" : selectedCombatant.type === "enemy" ? "🗡️" : "🛡️"}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, color: "var(--gold)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedCombatant.name}</div>
+          <div style={{ fontFamily: "'IM Fell English',serif", fontSize: 9, color: "rgba(200,149,42,.45)" }}>
+            AC {selectedCombatant.ac} · CR {selectedCombatant.cr}{selPos ? ` · ${String.fromCharCode(65 + parseInt(selPos.split(",")[1]))}${parseInt(selPos.split(",")[0]) + 1}` : ""}
+          </div>
+        </div>
+        <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "rgba(200,149,42,.4)", cursor: "pointer", fontSize: 14, padding: 0 }}>✕</button>
+      </div>
+
+      {/* HP display */}
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+          <span style={sLabel}>HP</span>
+          <span style={{ fontFamily: "'Cinzel',serif", fontSize: 10, color: selHpColor }}>{selectedCombatant.hp} / {selectedCombatant.hpMax}</span>
+        </div>
+        <div style={{ height: 6, background: "rgba(0,0,0,.5)", borderRadius: 3 }}>
+          <div style={{ width: `${selHpPct * 100}%`, height: "100%", background: selHpColor, borderRadius: 3, transition: "width .2s" }} />
         </div>
       </div>
 
-      {showAdd && (
-        <AddCombatantModal
-          characters={characters}
-          onAdd={c => setCombatants(prev => [...prev, c])}
-          onClose={() => setShowAdd(false)}
+      {/* DMG/HEAL inputs */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto", gap: 4, alignItems: "end", marginBottom: 8 }}>
+        <div>
+          <span style={sLabel}>DMG</span>
+          <input
+            style={{ ...sInput, textAlign: "center" }} type="number" min={0} value={dmgInput}
+            onChange={e => setDmgInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && applyDmg()}
+            placeholder="0"
+          />
+        </div>
+        <button style={{ ...sBtnDng, padding: "5px 10px", alignSelf: "end" }} onClick={applyDmg}>−HP</button>
+        <div>
+          <span style={sLabel}>HEAL</span>
+          <input
+            style={{ ...sInput, textAlign: "center" }} type="number" min={0} value={healInput}
+            onChange={e => setHealInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && applyHeal()}
+            placeholder="0"
+          />
+        </div>
+        <button style={{ ...sBtnSec, padding: "5px 10px", alignSelf: "end", color: "#4caf50", borderColor: "#4caf50" }} onClick={applyHeal}>+HP</button>
+      </div>
+
+      {/* Conditions */}
+      <div style={{ marginBottom: 6 }}>
+        <span style={sLabel}>Conditions</span>
+        {selectedCombatant.conditions.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 5 }}>
+            {selectedCombatant.conditions.map(cid => {
+              const cond = COND_MAP[cid];
+              if (!cond) return null;
+              return (
+                <span
+                  key={cid}
+                  onClick={() => toggleCondition(cid)}
+                  title={`${cond.name}: ${cond.desc}`}
+                  style={{ background: `${cond.color}33`, border: `1px solid ${cond.color}88`, borderRadius: 10, padding: "2px 7px", fontSize: 9, fontFamily: "'Cinzel',serif", color: cond.color, cursor: "pointer" }}
+                >{cond.icon} {cond.name}</span>
+              );
+            })}
+          </div>
+        )}
+        <button style={{ ...sBtnSec, width: "100%", fontSize: 8, padding: "3px 0" }} onClick={() => setShowAllConds(v => !v)}>
+          {showAllConds ? "▲ Hide" : "▼ Add Condition"}
+        </button>
+        {showAllConds && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 5, maxHeight: 120, overflowY: "auto" }}>
+            {CONDITIONS.map(cond => {
+              const has = selectedCombatant.conditions.includes(cond.id);
+              return (
+                <span
+                  key={cond.id}
+                  onClick={() => toggleCondition(cond.id)}
+                  title={cond.desc}
+                  style={{
+                    background: has ? `${cond.color}44` : "rgba(245,230,200,.04)",
+                    border: `1px solid ${has ? cond.color : "rgba(92,51,23,.3)"}`,
+                    borderRadius: 10, padding: "2px 7px", fontSize: 8,
+                    fontFamily: "'Cinzel',serif", color: has ? cond.color : "rgba(245,230,200,.4)",
+                    cursor: "pointer",
+                  }}
+                >{cond.icon} {cond.name}</span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Remove from grid */}
+      {selOnGrid && (
+        <button style={{ ...sBtnDng, width: "100%", fontSize: 8, padding: "4px 0", marginTop: 4 }} onClick={() => removeFromGrid(selected)}>
+          Remove from Grid
+        </button>
+      )}
+    </div>
+  );
+
+  // ─── Sidebar: Combat log ──────────────────────────────────────────────────────
+  const combatLog = log.length > 0 && (
+    <div style={{ ...sPanel, padding: "8px 10px" }}>
+      <span style={sLabel}>Combat Log</span>
+      <div style={{ maxHeight: 200, overflowY: "auto" }}>
+        {log.map((entry, i) => (
+          <div key={i} style={{ fontFamily: "'IM Fell English',serif", fontSize: 10, color: i === 0 ? "var(--vel)" : "rgba(245,230,200,.4)", marginBottom: 2, lineHeight: 1.4 }}>
+            {entry}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // ─── Render ──────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {toolbar}
+
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        {/* Grid */}
+        <div style={{ flex: "1 1 0", minWidth: 0 }}>
+          <div style={{ overflow: "auto", maxHeight: "calc(100vh - 200px)", background: "rgba(8,2,0,.6)", border: "1px solid rgba(60,30,10,.5)", borderRadius: 4, userSelect: "none" }}>
+            {columnLabels}
+            <div>{gridRows}</div>
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+          {initiativeList}
+          {sideTab === "party" ? partyPanel : monstersPanel}
+          {selectedPanel}
+          {combatLog}
+        </div>
+      </div>
+
+      {showAddModal && (
+        <AddCustomModal
+          onAdd={data => addCombatant(data)}
+          onClose={() => setShowAddModal(false)}
         />
       )}
     </div>

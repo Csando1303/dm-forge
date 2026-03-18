@@ -1,12 +1,11 @@
 import { useState, useCallback, useEffect } from "react";
-import { loadStore, saveStore, genId } from "./store.js";
+import { loadStore, saveStore } from "./store.js";
 import CampaignTracker from "./components/Campaign/CampaignTracker.jsx";
 import CombatTracker from "./components/Combat/CombatTracker.jsx";
 import Compendium from "./components/Compendium/Compendium.jsx";
 import CharacterSheet from "./components/CharacterSheet/index.jsx";
 import EncounterBuilder from "./components/EncounterBuilder/EncounterBuilder.jsx";
 import Generators from "./components/Generators/Generators.jsx";
-import AITools from "./components/AITools/AITools.jsx";
 import Wiki from "./components/Wiki/Wiki.jsx";
 
 const GLOBAL_CSS = `
@@ -156,6 +155,9 @@ export default function App() {
   const saveNote = useCallback(note => setStore(s => ({ ...s, generatorNotes: [note, ...s.generatorNotes] })), []);
   const deleteNote = useCallback(id => setStore(s => ({ ...s, generatorNotes: s.generatorNotes.filter(n => n.id !== id) })), []);
 
+  // Combat state persistence
+  const saveCombatState = useCallback(state => setStore(s => ({ ...s, combatState: state })), []);
+
   // Wiki
   const saveWikiEntry = useCallback(entry => setStore(s => ({ ...s, wiki: { ...s.wiki, [entry.id]: entry } })), []);
   const deleteWikiEntry = useCallback(id => setStore(s => {
@@ -168,27 +170,6 @@ export default function App() {
     return { ...s, wiki };
   }), []);
 
-  // Save AI-generated NPC directly to wiki
-  const saveNPCToWiki = useCallback(profile => {
-    const entry = {
-      id: genId(),
-      type: "NPC",
-      name: profile.name || "Unnamed NPC",
-      description: profile.appearance || "",
-      tags: [],
-      links: [],
-      createdAt: Date.now(),
-      race: profile.race || "",
-      role: profile.npcClass || "",
-      appearance: profile.appearance || "",
-      personalityTraits: profile.personalityTraits || "",
-      secretMotivation: profile.secretMotivation || "",
-      factionId: null,
-      locationId: null,
-    };
-    saveWikiEntry(entry);
-    setTab("wiki");
-  }, [saveWikiEntry]);
 
   const TABS = [
     { id:"characters",   label:"Characters",   icon:"⚔" },
@@ -197,7 +178,6 @@ export default function App() {
     { id:"compendium",   label:"Compendium",   icon:"📖" },
     { id:"encounter",    label:"Encounters",   icon:"⚔️" },
     { id:"generators",   label:"Generators",   icon:"🎲" },
-    { id:"aitools",      label:"AI Tools",     icon:"🔮" },
     { id:"wiki",         label:"Wiki",         icon:"🗺" },
   ];
 
@@ -249,10 +229,13 @@ export default function App() {
               <div className="sec-hdr">Combat Tracker</div>
               <CombatTracker
                 characters={store.characters}
+                customMonsters={store.customMonsters}
                 pendingCombatant={pendingCombatant}
                 onClearPending={() => setPendingCombatant(null)}
                 pendingCombatants={pendingCombatants}
                 onClearPendingAll={() => setPendingCombatants(null)}
+                initialState={store.combatState}
+                onSaveState={saveCombatState}
               />
             </div>
           )}
@@ -290,16 +273,11 @@ export default function App() {
                 generatorNotes={store.generatorNotes}
                 onSaveNote={saveNote}
                 onDeleteNote={deleteNote}
-              />
-            </div>
-          )}
-
-          {tab === "aitools" && (
-            <div className="sec-wrap">
-              <div className="sec-hdr">AI Dungeon Master Tools</div>
-              <AITools
                 characters={store.characters}
-                onSaveToWiki={saveNPCToWiki}
+                customMonsters={store.customMonsters}
+                onSendToInitiative={sendEncounterToInitiative}
+                onSaveToWiki={saveWikiEntry}
+                wiki={store.wiki}
               />
             </div>
           )}

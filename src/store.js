@@ -48,6 +48,7 @@ function defaultStore() {
     wiki: {},           // { [uuid]: { id, type, name, description, tags, links, ...fields } }
     savedEncounters: [], // [{ id, name, monsters: [{monsterId, quantity}] }]
     generatorNotes: [], // [{ id, text, createdAt }]
+    combatState: null,  // persisted combat grid state
   };
 }
 

@@ -20,13 +20,16 @@ function blankEntry(type) {
     links: [],
     createdAt: new Date().toISOString(),
     // Location
-    ...(type === "Location" ? { locationType: "City", notableFeatures: "" } : {}),
+    ...(type === "Location" ? {
+      locationType: "", notableFeatures: "", atmosphere: "", features: [], danger: "", secret: "",
+    } : {}),
     // Faction
     ...(type === "Faction" ? { goals: "", keyMembers: "", alignment: "True Neutral", status: "Active" } : {}),
     // NPC
     ...(type === "NPC" ? {
-      race: "", role: "", appearance: "", personalityTraits: "",
-      secretMotivation: "", factionId: null, locationId: null,
+      race: "", role: "", alignment: "True Neutral", background: "", level: 1,
+      appearance: "", personalityTrait: "", ideal: "", bond: "", flaw: "",
+      personalityTraits: "", secretMotivation: "", factionId: null, locationId: null,
     } : {}),
   };
 }
@@ -186,14 +189,44 @@ function EntryEditor({ entry, wiki, onSave, onDelete, onNavigate }) {
         <>
           {sectionHdr("Location Details")}
           <Field label="Location Type">
-            <select style={selectStyle} value={form.locationType || "City"} onChange={e => f("locationType", e.target.value)}>
-              {["City", "Town", "Village", "Dungeon", "Wilderness", "Other"].map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
+            <input style={iStyle} value={form.locationType || ""} onChange={e => f("locationType", e.target.value)} placeholder="e.g. Inn & Tavern, Dungeon, Forest…" />
+          </Field>
+          <Field label="Atmosphere">
+            <textarea style={taStyle} value={form.atmosphere || ""} onChange={e => f("atmosphere", e.target.value)} placeholder="The mood and feel of this place…" />
           </Field>
           <Field label="Notable Features">
-            <textarea style={taStyle} value={form.notableFeatures || ""} onChange={e => f("notableFeatures", e.target.value)} placeholder="What makes this place memorable?" />
+            <textarea
+              style={taStyle}
+              value={form.notableFeatures || (Array.isArray(form.features) ? form.features.join("\n") : "")}
+              onChange={e => f("notableFeatures", e.target.value)}
+              placeholder="One feature per line…"
+            />
+          </Field>
+          <Field label={
+            <span>
+              Hidden Danger
+              <span style={{ fontFamily: "'Cinzel',serif", fontSize: 7, letterSpacing: 1, background: "rgba(200,149,42,.15)", border: "1px solid rgba(200,149,42,.4)", color: "var(--gold)", borderRadius: 2, padding: "1px 6px", marginLeft: 6 }}>DC 12 · Perception</span>
+            </span>
+          }>
+            <textarea
+              style={{ ...taStyle, borderColor: "rgba(139,26,26,.4)", borderLeft: "3px solid rgba(139,26,26,.5)" }}
+              value={form.danger || ""}
+              onChange={e => f("danger", e.target.value)}
+              placeholder="A lurking threat players might sense…"
+            />
+          </Field>
+          <Field label={
+            <span>
+              Secret
+              <span style={{ fontFamily: "'Cinzel',serif", fontSize: 7, letterSpacing: 1, background: "rgba(100,60,160,.15)", border: "1px solid rgba(120,80,180,.4)", color: "#b080e0", borderRadius: 2, padding: "1px 6px", marginLeft: 6 }}>DC 18 · Investigation</span>
+            </span>
+          }>
+            <textarea
+              style={{ ...taStyle, borderColor: "rgba(100,60,160,.4)", borderLeft: "3px solid rgba(120,80,180,.5)" }}
+              value={form.secretMotivation || form.secret || ""}
+              onChange={e => f("secret", e.target.value)}
+              placeholder="What this place hides from prying eyes…"
+            />
           </Field>
         </>
       )}
@@ -238,12 +271,34 @@ function EntryEditor({ entry, wiki, onSave, onDelete, onNavigate }) {
           <Field label="Appearance">
             <textarea style={taStyle} value={form.appearance || ""} onChange={e => f("appearance", e.target.value)} placeholder="Physical description…" />
           </Field>
-          <Field label="Personality Traits">
-            <textarea style={taStyle} value={form.personalityTraits || ""} onChange={e => f("personalityTraits", e.target.value)} placeholder="How they act and speak…" />
+          <Field label="Personality Trait">
+            <textarea style={taStyle} value={form.personalityTrait || form.personalityTraits || ""} onChange={e => f("personalityTrait", e.target.value)} placeholder="How they act and speak…" />
+          </Field>
+          <Field label="Ideal">
+            <textarea style={taStyle} value={form.ideal || ""} onChange={e => f("ideal", e.target.value)} placeholder="What they believe in above all else…" />
+          </Field>
+          <Field label="Bond">
+            <textarea style={taStyle} value={form.bond || ""} onChange={e => f("bond", e.target.value)} placeholder="Who or what they care about most…" />
+          </Field>
+          <Field label="Flaw">
+            <textarea style={taStyle} value={form.flaw || ""} onChange={e => f("flaw", e.target.value)} placeholder="Their weakness or vice…" />
           </Field>
           <Field label="Secret Motivation">
             <textarea style={{ ...taStyle, borderColor: "rgba(139,26,26,.4)" }} value={form.secretMotivation || ""} onChange={e => f("secretMotivation", e.target.value)} placeholder="What they truly want (hidden from players)…" />
           </Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <Field label="Alignment">
+              <select style={selectStyle} value={form.alignment || "True Neutral"} onChange={e => f("alignment", e.target.value)}>
+                {ALIGNMENTS.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </Field>
+            <Field label="Background">
+              <input style={iStyle} value={form.background || ""} onChange={e => f("background", e.target.value)} placeholder="e.g. Soldier, Sage…" />
+            </Field>
+            <Field label="Level">
+              <input style={iStyle} type="number" min={1} max={20} value={form.level || 1} onChange={e => f("level", Number(e.target.value))} />
+            </Field>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Field label="Faction">
               <select style={selectStyle} value={form.factionId || ""} onChange={e => f("factionId", e.target.value || null)}>
