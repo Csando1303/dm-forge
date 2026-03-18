@@ -326,14 +326,14 @@ function AddCombatantModal({ characters, onAdd, onClose }) {
   );
 }
 
-export default function CombatTracker({ characters, combat, onChange, pendingCombatant, onClearPending }) {
+export default function CombatTracker({ characters, combat, onChange, pendingCombatant, onClearPending, pendingCombatants, onClearPendingAll }) {
   const [showAdd, setShowAdd] = useState(false);
   const [round, setRound] = useState(combat?.round || 1);
   const [activeIdx, setActiveIdx] = useState(combat?.activeIdx || 0);
   const [combatants, setCombatants] = useState(combat?.combatants || []);
   const [log, setLog] = useState(combat?.log || []);
 
-  // Auto-add monster from compendium
+  // Auto-add single monster from compendium
   useEffect(() => {
     if (!pendingCombatant) return;
     const hpVal = pendingCombatant.hp || 10;
@@ -351,6 +351,25 @@ export default function CombatTracker({ characters, combat, onChange, pendingCom
     }]);
     onClearPending?.();
   }, [pendingCombatant]);
+
+  // Auto-add multiple monsters from encounter builder
+  useEffect(() => {
+    if (!pendingCombatants?.length) return;
+    const newCombatants = pendingCombatants.map(m => ({
+      id: `${Date.now()}_${Math.random().toString(36).slice(2,6)}_${Math.random().toString(36).slice(2,4)}`,
+      name: m.name,
+      type: "enemy",
+      initiative: Math.floor(Math.random() * 20) + 1,
+      hp: m.hp || 10,
+      hpMax: m.hp || 10,
+      ac: m.ac || 10,
+      cr: m.cr || "",
+      conditions: [],
+      isConcentrating: false,
+    }));
+    setCombatants(prev => [...prev, ...newCombatants]);
+    onClearPendingAll?.();
+  }, [pendingCombatants]);
 
   const sorted = [...combatants].sort((a, b) => b.initiative - a.initiative);
 

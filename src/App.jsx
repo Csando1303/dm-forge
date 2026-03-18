@@ -4,6 +4,10 @@ import CampaignTracker from "./components/Campaign/CampaignTracker.jsx";
 import CombatTracker from "./components/Combat/CombatTracker.jsx";
 import Compendium from "./components/Compendium/Compendium.jsx";
 import CharacterSheet from "./components/CharacterSheet/index.jsx";
+import EncounterBuilder from "./components/EncounterBuilder/EncounterBuilder.jsx";
+import Generators from "./components/Generators/Generators.jsx";
+import AITools from "./components/AITools/AITools.jsx";
+import Wiki from "./components/Wiki/Wiki.jsx";
 
 const GLOBAL_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Cinzel+Decorative:wght@400;700&family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&display=swap');
@@ -88,6 +92,7 @@ export default function App() {
   const [tab, setTab] = useState("characters");
   const [savedFlash, setSavedFlash] = useState(false);
   const [pendingCombatant, setPendingCombatant] = useState(null);
+  const [pendingCombatants, setPendingCombatants] = useState(null);
 
   useEffect(() => {
     const t = setInterval(() => saveStore(store), 30000);
@@ -128,17 +133,72 @@ export default function App() {
   }), []);
   const deleteCustomMonster = useCallback(id => setStore(s => ({ ...s, customMonsters: s.customMonsters.filter(x => x.id !== id) })), []);
 
-  // Send monster to combat
+  // Send single monster to combat (from compendium)
   const addToCombat = useCallback(monster => {
     setPendingCombatant(monster);
     setTab("combat");
   }, []);
 
+  // Send encounter (multiple monsters) to combat (from encounter builder)
+  const sendEncounterToInitiative = useCallback(monsters => {
+    setPendingCombatants(monsters);
+    setTab("combat");
+  }, []);
+
+  // Encounter Builder
+  const saveEncounter = useCallback(enc => setStore(s => {
+    const idx = s.savedEncounters.findIndex(x => x.id === enc.id);
+    return { ...s, savedEncounters: idx >= 0 ? s.savedEncounters.map(x => x.id===enc.id ? enc : x) : [...s.savedEncounters, enc] };
+  }), []);
+  const deleteEncounter = useCallback(id => setStore(s => ({ ...s, savedEncounters: s.savedEncounters.filter(x => x.id !== id) })), []);
+
+  // Generator notes
+  const saveNote = useCallback(note => setStore(s => ({ ...s, generatorNotes: [note, ...s.generatorNotes] })), []);
+  const deleteNote = useCallback(id => setStore(s => ({ ...s, generatorNotes: s.generatorNotes.filter(n => n.id !== id) })), []);
+
+  // Wiki
+  const saveWikiEntry = useCallback(entry => setStore(s => ({ ...s, wiki: { ...s.wiki, [entry.id]: entry } })), []);
+  const deleteWikiEntry = useCallback(id => setStore(s => {
+    const wiki = { ...s.wiki };
+    delete wiki[id];
+    // Remove links pointing to deleted entry from all other entries
+    Object.keys(wiki).forEach(k => {
+      wiki[k] = { ...wiki[k], links: (wiki[k].links || []).filter(l => l.targetId !== id) };
+    });
+    return { ...s, wiki };
+  }), []);
+
+  // Save AI-generated NPC directly to wiki
+  const saveNPCToWiki = useCallback(profile => {
+    const entry = {
+      id: genId(),
+      type: "NPC",
+      name: profile.name || "Unnamed NPC",
+      description: profile.appearance || "",
+      tags: [],
+      links: [],
+      createdAt: Date.now(),
+      race: profile.race || "",
+      role: profile.npcClass || "",
+      appearance: profile.appearance || "",
+      personalityTraits: profile.personalityTraits || "",
+      secretMotivation: profile.secretMotivation || "",
+      factionId: null,
+      locationId: null,
+    };
+    saveWikiEntry(entry);
+    setTab("wiki");
+  }, [saveWikiEntry]);
+
   const TABS = [
-    { id:"characters", label:"Characters", icon:"⚔" },
-    { id:"campaign",   label:"Campaign",   icon:"📜" },
-    { id:"combat",     label:"Combat",     icon:"🛡" },
-    { id:"compendium", label:"Compendium", icon:"📖" },
+    { id:"characters",   label:"Characters",   icon:"⚔" },
+    { id:"campaign",     label:"Campaign",     icon:"📜" },
+    { id:"combat",       label:"Combat",       icon:"🛡" },
+    { id:"compendium",   label:"Compendium",   icon:"📖" },
+    { id:"encounter",    label:"Encounters",   icon:"⚔️" },
+    { id:"generators",   label:"Generators",   icon:"🎲" },
+    { id:"aitools",      label:"AI Tools",     icon:"🔮" },
+    { id:"wiki",         label:"Wiki",         icon:"🗺" },
   ];
 
   return (
@@ -191,6 +251,8 @@ export default function App() {
                 characters={store.characters}
                 pendingCombatant={pendingCombatant}
                 onClearPending={() => setPendingCombatant(null)}
+                pendingCombatants={pendingCombatants}
+                onClearPendingAll={() => setPendingCombatants(null)}
               />
             </div>
           )}
@@ -205,6 +267,49 @@ export default function App() {
                 onAddToCombat={addToCombat}
               />
             </div>
+          )}
+
+          {tab === "encounter" && (
+            <div className="sec-wrap">
+              <div className="sec-hdr">Encounter Builder</div>
+              <EncounterBuilder
+                characters={store.characters}
+                customMonsters={store.customMonsters}
+                savedEncounters={store.savedEncounters}
+                onSaveEncounter={saveEncounter}
+                onDeleteEncounter={deleteEncounter}
+                onSendToInitiative={sendEncounterToInitiative}
+              />
+            </div>
+          )}
+
+          {tab === "generators" && (
+            <div className="sec-wrap">
+              <div className="sec-hdr">Random Generators</div>
+              <Generators
+                generatorNotes={store.generatorNotes}
+                onSaveNote={saveNote}
+                onDeleteNote={deleteNote}
+              />
+            </div>
+          )}
+
+          {tab === "aitools" && (
+            <div className="sec-wrap">
+              <div className="sec-hdr">AI Dungeon Master Tools</div>
+              <AITools
+                characters={store.characters}
+                onSaveToWiki={saveNPCToWiki}
+              />
+            </div>
+          )}
+
+          {tab === "wiki" && (
+            <Wiki
+              wiki={store.wiki}
+              onSave={saveWikiEntry}
+              onDelete={deleteWikiEntry}
+            />
           )}
         </main>
       </div>

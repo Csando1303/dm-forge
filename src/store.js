@@ -44,6 +44,10 @@ function defaultStore() {
     combats: [],
     customMonsters: [],
     pinnedMonsters: [],
+    // Phase 2
+    wiki: {},           // { [uuid]: { id, type, name, description, tags, links, ...fields } }
+    savedEncounters: [], // [{ id, name, monsters: [{monsterId, quantity}] }]
+    generatorNotes: [], // [{ id, text, createdAt }]
   };
 }
 
